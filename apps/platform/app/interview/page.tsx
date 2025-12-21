@@ -17,11 +17,14 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
-import { currentUser } from "@/data/mockData";
+import type { User } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackCurrentUser } from "@/lib/fallback-data";
 
 type InterviewState = 'ai-speaking' | 'user-speaking' | 'processing' | 'listening';
 
 export default function InterviewPage() {
+  const currentUser = useBackendData<User>("/api/user", fallbackCurrentUser);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);

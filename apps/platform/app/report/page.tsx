@@ -28,8 +28,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { mockReport } from "@/data/mockData";
 import { cn } from "@/lib/utils";
+import type { ReportData } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackReport } from "@/lib/fallback-data";
 import {
   Radar,
   RadarChart,
@@ -56,6 +58,7 @@ import {
 export default function ReportPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [openQuestion, setOpenQuestion] = useState<number | null>(null);
+  const report = useBackendData<ReportData>("/api/report/latest", fallbackReport);
 
   useEffect(() => {
     // Simulate analysis delay
@@ -92,7 +95,7 @@ export default function ReportPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Interview Analysis</h1>
           <p className="text-muted-foreground mt-1">
-            Session ID: {mockReport.id} • {new Date(mockReport.date).toLocaleDateString()} • {mockReport.duration}
+            Session ID: {report.id} • {new Date(report.date).toLocaleDateString()} • {report.duration}
           </p>
         </div>
         <div className="flex gap-3">
@@ -116,10 +119,10 @@ export default function ReportPage() {
           </CardHeader>
           <CardContent>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-primary">{mockReport.overallScore}</span>
+              <span className="text-4xl font-bold text-primary">{report.overallScore}</span>
               <span className="text-sm text-muted-foreground">/ 100</span>
             </div>
-            <Progress value={mockReport.overallScore} className="h-2 mt-3" />
+            <Progress value={report.overallScore} className="h-2 mt-3" />
           </CardContent>
         </Card>
         <Card>
@@ -128,10 +131,10 @@ export default function ReportPage() {
           </CardHeader>
           <CardContent>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">{mockReport.hardSkillsScore}</span>
+              <span className="text-3xl font-bold">{report.hardSkillsScore}</span>
               <span className="text-sm text-muted-foreground">/ 100</span>
             </div>
-            <Progress value={mockReport.hardSkillsScore} className="h-2 mt-3 bg-muted" />
+            <Progress value={report.hardSkillsScore} className="h-2 mt-3 bg-muted" />
           </CardContent>
         </Card>
         <Card>
@@ -140,10 +143,10 @@ export default function ReportPage() {
           </CardHeader>
           <CardContent>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">{mockReport.softSkillsScore}</span>
+              <span className="text-3xl font-bold">{report.softSkillsScore}</span>
               <span className="text-sm text-muted-foreground">/ 100</span>
             </div>
-            <Progress value={mockReport.softSkillsScore} className="h-2 mt-3 bg-muted" />
+            <Progress value={report.softSkillsScore} className="h-2 mt-3 bg-muted" />
           </CardContent>
         </Card>
       </div>
@@ -157,7 +160,7 @@ export default function ReportPage() {
           </CardHeader>
           <CardContent className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
-              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={mockReport.radarData}>
+              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={report.radarData}>
                 <PolarGrid stroke="#333" />
                 <PolarAngleAxis dataKey="subject" tick={{ fill: '#888', fontSize: 12 }} />
                 <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
@@ -184,7 +187,7 @@ export default function ReportPage() {
           <CardContent className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
-                data={mockReport.timelineData}
+                data={report.timelineData}
                 margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
               >
                 <defs>
@@ -240,7 +243,7 @@ export default function ReportPage() {
         </TabsList>
 
         <TabsContent value="questions" className="space-y-4">
-          {mockReport.questions.map((q) => (
+    		  {report.questions.map((q) => (
             <Card key={q.id} className="overflow-hidden">
               <Collapsible 
                 open={openQuestion === q.id} 
@@ -316,7 +319,7 @@ export default function ReportPage() {
               <CardDescription>Review the entire conversation history</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {mockReport.transcript.map((entry, i) => (
+              {report.transcript.map((entry, i) => (
                 <div key={i} className={cn("flex gap-4", entry.speaker === 'You' ? "flex-row-reverse" : "")}>
                   <div className={cn(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
@@ -358,7 +361,7 @@ export default function ReportPage() {
               </CardHeader>
               <CardContent className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={mockReport.fillerWordsAnalysis} layout="vertical" margin={{ left: 20 }}>
+                  <BarChart data={report.fillerWordsAnalysis} layout="vertical" margin={{ left: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#333" />
                     <XAxis type="number" stroke="#888" fontSize={12} tickLine={false} axisLine={false} />
                     <YAxis dataKey="word" type="category" stroke="#888" fontSize={12} tickLine={false} axisLine={false} width={60} />
@@ -381,7 +384,7 @@ export default function ReportPage() {
               </CardHeader>
               <CardContent className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={mockReport.pacingAnalysis}>
+                  <AreaChart data={report.pacingAnalysis}>
                     <defs>
                       <linearGradient id="colorWpm" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
@@ -420,7 +423,7 @@ export default function ReportPage() {
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2">
-                  {mockReport.swot.strengths.map((item, i) => (
+                  {report.swot.strengths.map((item, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm">
                       <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
                       {item}
@@ -437,7 +440,7 @@ export default function ReportPage() {
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2">
-                  {mockReport.swot.weaknesses.map((item, i) => (
+                  {report.swot.weaknesses.map((item, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm">
                       <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
                       {item}
@@ -454,7 +457,7 @@ export default function ReportPage() {
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2">
-                  {mockReport.swot.opportunities.map((item, i) => (
+                  {report.swot.opportunities.map((item, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm">
                       <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
                       {item}
@@ -471,7 +474,7 @@ export default function ReportPage() {
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2">
-                  {mockReport.swot.threats.map((item, i) => (
+                  {report.swot.threats.map((item, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm">
                       <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-orange-500 shrink-0" />
                       {item}
@@ -485,7 +488,7 @@ export default function ReportPage() {
 
         <TabsContent value="behavioral" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
-            {Object.entries(mockReport.behavioralAnalysis).map(([key, value]) => (
+            {Object.entries(report.behavioralAnalysis).map(([key, value]) => (
               <Card key={key}>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium capitalize text-muted-foreground">
@@ -502,7 +505,7 @@ export default function ReportPage() {
 
         <TabsContent value="resources" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
-            {mockReport.resources.map((resource, i) => (
+            {report.resources.map((resource, i) => (
               <Card key={i} className="group cursor-pointer hover:border-primary/50 transition-colors">
                 <CardHeader>
                   <div className="flex items-center justify-between mb-2">

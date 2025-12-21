@@ -15,9 +15,16 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { communityPosts } from "@/data/mockData";
+import type { CommunityPost } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackCommunityPosts } from "@/lib/fallback-data";
 
 export default function CommunityPage() {
+  const communityPosts = useBackendData<CommunityPost[]>(
+    "/api/community/posts",
+    fallbackCommunityPosts
+  );
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between">

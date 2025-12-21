@@ -6,11 +6,17 @@ import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { upcomingSchedule } from "@/data/mockData";
 import { Clock, Video, Calendar as CalendarIcon, Plus } from "lucide-react";
+import type { ScheduledSession } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackUpcomingSchedule } from "@/lib/fallback-data";
 
 export default function SchedulePage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
+  const upcomingSchedule = useBackendData<ScheduledSession[]>(
+    "/api/schedule",
+    fallbackUpcomingSchedule
+  );
 
   return (
     <div className="space-y-8">

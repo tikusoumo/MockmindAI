@@ -5,9 +5,16 @@ import { ArrowRight, Clock, Calendar } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { pastInterviews } from "@/data/mockData";
+import type { PastInterview } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackPastInterviews } from "@/lib/fallback-data";
 
 export function RecentActivity() {
+  const pastInterviews = useBackendData<PastInterview[]>(
+    "/api/interviews/past",
+    fallbackPastInterviews
+  );
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">

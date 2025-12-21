@@ -1,11 +1,13 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { mockReport } from "@/data/mockData";
 import { Activity, Mic, Timer, TrendingUp } from "lucide-react";
+import type { ReportData } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackReport } from "@/lib/fallback-data";
 
 export function LatestInsights() {
-  const latest = mockReport;
+  const latest = useBackendData<ReportData>("/api/report/latest", fallbackReport);
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

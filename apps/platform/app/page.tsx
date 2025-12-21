@@ -27,15 +27,39 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { currentUser, interviewTemplates, progressStats, upcomingSchedule } from "@/data/mockData";
+import type {
+  InterviewTemplate,
+  ProgressStat,
+  ScheduledSession,
+  User,
+} from "@/data/mockData";
 import { ProgressChart } from "@/components/dashboard/ProgressChart";
 import { RecentActivity } from "@/components/dashboard/RecentActivity";
 import { SkillsRadar } from "@/components/dashboard/SkillsRadar";
 import { LatestInsights } from "@/components/dashboard/LatestInsights";
 import { cn } from "@/lib/utils";
+import { backendGet, backendPost, useBackendData } from "@/lib/backend";
+import {
+  fallbackCurrentUser,
+  fallbackInterviewTemplates,
+  fallbackProgressStats,
+  fallbackUpcomingSchedule,
+} from "@/lib/fallback-data";
 
 export default function Dashboard() {
-  const [sessions, setSessions] = React.useState(upcomingSchedule);
+  const user = useBackendData<User>("/api/user", fallbackCurrentUser);
+  const interviewTemplates = useBackendData<InterviewTemplate[]>(
+    "/api/interview-templates",
+    fallbackInterviewTemplates
+  );
+  const progressStats = useBackendData<ProgressStat[]>(
+    "/api/progress-stats",
+    fallbackProgressStats
+  );
+
+  const [sessions, setSessions] = React.useState<ScheduledSession[]>(
+    fallbackUpcomingSchedule
+  );
   const [scheduleOpen, setScheduleOpen] = React.useState(false);
   const [draftSession, setDraftSession] = React.useState({
     title: "",
@@ -44,27 +68,45 @@ export default function Dashboard() {
     interviewer: "AI",
   });
 
+  React.useEffect(() => {
+    backendGet<ScheduledSession[]>("/api/schedule")
+      .then((items) => setSessions(items))
+      .catch(() => setSessions(fallbackUpcomingSchedule));
+  }, []);
+
   const canSchedule =
     draftSession.title.trim().length > 0 &&
     draftSession.date.trim().length > 0 &&
     draftSession.time.trim().length > 0;
 
-  function addSession() {
+  async function addSession() {
     if (!canSchedule) return;
 
-    const next = {
-      id: String(Date.now()),
+    const payload = {
       title: draftSession.title.trim(),
       date: draftSession.date,
       time: draftSession.time,
       interviewer: draftSession.interviewer.trim() || "AI",
     };
 
-    setSessions((prev) =>
-      [...prev, next].sort((a, b) =>
-        `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)
-      )
-    );
+    try {
+      const created = await backendPost<ScheduledSession>("/api/schedule", payload);
+      setSessions((prev) => {
+        const next = [...prev, created];
+        next.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+        return next;
+      });
+    } catch {
+      const created: ScheduledSession = {
+        id: String(Date.now()),
+        ...payload,
+      };
+      setSessions((prev) => {
+        const next = [...prev, created];
+        next.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+        return next;
+      });
+    }
 
     setScheduleOpen(false);
     setDraftSession((s) => ({
@@ -78,7 +120,7 @@ export default function Dashboard() {
       {/* Welcome Section */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Welcome back, {currentUser.name.split(' ')[0]}!</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Welcome back, {user.name.split(' ')[0]}!</h1>
           <p className="text-muted-foreground mt-1">
             You&apos;re on a 3-day streak. Keep up the momentum!
           </p>

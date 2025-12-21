@@ -8,9 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { currentUser } from "@/data/mockData";
+import type { User } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackCurrentUser } from "@/lib/fallback-data";
 
 export default function SettingsPage() {
+  const currentUser = useBackendData<User>("/api/user", fallbackCurrentUser);
+
   return (
     <div className="space-y-8 max-w-4xl">
       <div>

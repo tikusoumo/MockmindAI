@@ -22,10 +22,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { pastInterviews } from "@/data/mockData";
 import Link from "next/link";
+import type { PastInterview } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackPastInterviews } from "@/lib/fallback-data";
 
 export default function HistoryPage() {
+  const pastInterviews = useBackendData<PastInterview[]>(
+    "/api/interviews/past",
+    fallbackPastInterviews
+  );
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">

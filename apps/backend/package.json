@@ -1,0 +1,11 @@
+{
+  "name": "@apps/backend",
+  "private": true,
+  "scripts": {
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1",
+    "migrate": "alembic -c alembic.ini upgrade head",
+    "seed": "python -m agent.seed",
+    "lint": "python -m ruff check .",
+    "format": "python -m ruff format ."
+  }
+}

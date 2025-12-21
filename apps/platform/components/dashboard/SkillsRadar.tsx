@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import {
   Radar,
   RadarChart,
@@ -16,12 +17,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { mockReport } from "@/data/mockData";
-
-// Use the first report's data for the dashboard summary
-const data = mockReport.radarData;
+import type { ReportData } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
+import { fallbackReport } from "@/lib/fallback-data";
 
 export function SkillsRadar() {
+  const report = useBackendData<ReportData>("/api/report/latest", fallbackReport);
+  const data = React.useMemo(() => report.radarData, [report.radarData]);
+
   return (
     <Card>
       <CardHeader>

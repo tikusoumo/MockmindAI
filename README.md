@@ -1,5 +1,46 @@
 # Turborepo starter
 
+## Run the whole app on Linux (Vagrant)
+
+This repo includes a `Vagrantfile` that boots an Ubuntu VM and installs Docker + Compose.
+
+1) Install prerequisites on your host:
+- Vagrant
+- VirtualBox
+
+2) Boot the VM:
+
+```sh
+vagrant up
+```
+
+3) Run the full stack inside the VM:
+
+```sh
+vagrant ssh
+cd /vagrant
+docker compose up --build
+```
+
+4) Open from your host browser:
+- Frontend: http://localhost:3000
+- Backend: http://localhost:8000/docs
+- pgAdmin: http://localhost:5050
+
+If any of those ports are already in use on your host, run `vagrant port` to see the auto-corrected host port mappings.
+
+### Public vs private forwarded ports
+
+By default:
+- **Public (LAN)**: `3000` (frontend), `8000` (backend) bind to `0.0.0.0`
+- **Private (localhost-only)**: `5050` (pgAdmin), `5432` (Postgres) bind to `127.0.0.1`
+
+You can override the bind IPs:
+
+```sh
+PUBLIC_HOST_IP=127.0.0.1 vagrant up
+```
+
 This Turborepo starter is maintained by the Turborepo core team.
 
 ## Using this example

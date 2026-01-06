@@ -27,6 +27,8 @@ export default function InterviewPage() {
   const currentUser = useBackendData<User>("/api/user", fallbackCurrentUser);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isCameraLoading, setIsCameraLoading] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [interviewState, setInterviewState] = useState<InterviewState>('ai-speaking');
   const [audioLevel, setAudioLevel] = useState(0);
@@ -47,6 +49,9 @@ export default function InterviewPage() {
   const animationFrameRef = useRef<number | null>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const currentVolumeRef = useRef(0);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const videoStreamRef = useRef<MediaStream | null>(null);
 
   // Timer effect
   useEffect(() => {
@@ -146,6 +151,69 @@ export default function InterviewPage() {
       }
     };
   }, [isMuted, interviewState]);
+
+  // Initialize Camera
+  useEffect(() => {
+    const stopVideo = () => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+
+      if (videoStreamRef.current) {
+        for (const track of videoStreamRef.current.getTracks()) {
+          track.stop();
+        }
+        videoStreamRef.current = null;
+      }
+    };
+
+    const initVideo = async () => {
+      setIsCameraLoading(true);
+      setCameraError(null);
+
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setCameraError("Camera is not supported in this browser.");
+          return;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+
+        videoStreamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to access camera.";
+        setCameraError(message);
+        stopVideo();
+      } finally {
+        setIsCameraLoading(false);
+      }
+    };
+
+    if (isVideoOff) {
+      stopVideo();
+      setCameraError(null);
+      setIsCameraLoading(false);
+      return;
+    }
+
+    initVideo();
+
+    return () => {
+      stopVideo();
+    };
+  }, [isVideoOff]);
 
   // AI Simulation effect
   useEffect(() => {
@@ -265,21 +333,35 @@ export default function InterviewPage() {
           "relative flex flex-col items-center justify-center overflow-hidden bg-zinc-900 transition-all duration-300",
           interviewState === 'user-speaking' ? "border-green-500 shadow-[0_0_30px_-5px_rgba(34,197,94,0.2)]" : "border-zinc-800"
         )}>
-          {isVideoOff ? (
+          {isVideoOff || cameraError ? (
             <div className="flex flex-col items-center gap-2 text-muted-foreground">
               <Avatar className="h-24 w-24 border-4 border-zinc-700 mb-2">
                 <AvatarImage src={currentUser.avatar} />
                 <AvatarFallback>{currentUser.name[0]}</AvatarFallback>
               </Avatar>
               <p className="font-semibold text-lg text-white">{currentUser.name}</p>
-              <p className="text-xs text-muted-foreground">Camera is off</p>
+              <p className="text-xs text-muted-foreground">
+                {cameraError ? "Camera unavailable" : "Camera is off"}
+              </p>
             </div>
           ) : (
             <div className="absolute inset-0 bg-zinc-800">
-              {/* Placeholder for Webcam Feed */}
-              <div className="flex h-full w-full items-center justify-center text-zinc-500 relative">
-                <span className="text-lg">[ User Webcam Feed ]</span>
-              </div>
+              <video
+                ref={videoRef}
+                className="h-full w-full object-cover -scale-x-100"
+                autoPlay
+                playsInline
+                muted
+              />
+
+              {isCameraLoading && (
+                <div className="absolute inset-0 flex items-center justify-center text-zinc-200 bg-black/40">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span className="text-sm">Starting camera…</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           

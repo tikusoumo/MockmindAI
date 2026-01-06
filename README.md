@@ -1,3 +1,9 @@
+# Vagrant Setup
+
+Start Linux VM: vagrant up
+Run stack inside VM: ```vagrant ssh``` then cd ```/vagrant && docker compose up --build```
+Open on your Windows host browser: http://localhost:3000 (camera access uses your host browser/device)
+
 # Turborepo starter
 
 ## Run the whole app on Linux (Vagrant)

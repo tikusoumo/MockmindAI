@@ -36,15 +36,38 @@ services:
       APP_PORT: ${APP_PORT:-8000}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/postgres}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:3000,http://localhost:3001}
-      # LiveKit (optional)
+      # LiveKit
       LIVEKIT_URL: ${LIVEKIT_URL:-}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      # Google API
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./apps/backend:/app/apps/backend
+
+  agent-worker:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    command: python -m agent.voice_agent start
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      # LiveKit
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      # Google API
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    depends_on:
+      - backend
+    volumes:
+      - ./apps/backend:/app/apps/backend
+    restart: unless-stopped
 
   frontend:
     build:

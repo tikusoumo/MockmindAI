@@ -1,10 +1,79 @@
-# Vagrant Setup
+# AI Voice Agent - Turborepo Monorepo
+
+AI Voice Agent platform with real-time voice conversations using LiveKit, Google STT/TTS, and Gemini LLM.
+
+## Quick Start (Vagrant VM)
+
+1. **Start the VM:**
+   ```sh
+   vagrant up
+   ```
+
+2. **Configure LiveKit & Google API:**
+   - Edit `.env` in the project root
+   - Add your `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
+   - Add your `GOOGLE_API_KEY` (already configured)
+
+3. **Run the stack:**
+   ```sh
+   vagrant ssh
+   cd /vagrant
+   docker compose up --build
+   ```
+
+4. **Access the services:**
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:8000/docs
+   - pgAdmin: http://localhost:5050
+   - Agent Worker: Runs automatically in background
+
+## Architecture
+
+The project includes:
+- **Frontend** (Next.js): User interface at `apps/platform`
+- **Backend** (FastAPI): REST API at `apps/backend`
+- **Agent Worker**: LiveKit voice agent with Google STT/TTS
+- **Database**: PostgreSQL with pgAdmin
+- **LiveKit**: Real-time voice communication
+- **Google APIs**: Speech-to-Text, Text-to-Speech, Gemini LLM
+
+## Services
+
+### Backend API (Port 8000)
+REST endpoints for room creation and token generation:
+- `POST /livekit/rooms` - Create a LiveKit room
+- `POST /livekit/token` - Generate participant token
+- `POST /livekit/agent-token` - Generate agent token
+
+### Agent Worker
+Automatically connects to LiveKit rooms and provides:
+- Speech recognition (Google STT)
+- Natural language understanding (Google Gemini)
+- Speech synthesis (Google TTS)
+- Real-time voice interaction
+
+## Getting API Keys
+
+### LiveKit
+1. Sign up at [LiveKit Cloud](https://cloud.livekit.io)
+2. Create a new project
+3. Copy the WebSocket URL, API Key, and API Secret
+4. Add to `.env` in project root
+
+### Google API
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a project and enable:
+   - Cloud Speech-to-Text API
+   - Cloud Text-to-Speech API
+   - Vertex AI API (for Gemini)
+3. Create an API key in "Credentials"
+4. Add to `.env` as `GOOGLE_API_KEY`
+
+## Vagrant Setup
 
 Start Linux VM: vagrant up
 Run stack inside VM: ```vagrant ssh``` then cd ```/vagrant && docker compose up --build```
 Open on your Windows host browser: http://localhost:3000 (camera access uses your host browser/device)
-
-# Turborepo starter
 
 ## Run the whole app on Linux (Vagrant)
 

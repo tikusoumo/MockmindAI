@@ -12,10 +12,16 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
-    livekit_url: AnyHttpUrl | None = None
+    livekit_url: str = "ws://localhost:7880"
     livekit_api_key: str | None = None
     livekit_api_secret: str | None = None
 
+    # Local Model Configuration
+    llama_base_url: str = "http://localhost:11434/v1"
+    llama_model: str = "qwen3-4b"
+    whisper_base_url: str = "http://localhost:11435/v1"
+    kokoro_base_url: str = "http://localhost:8880/v1"
+    
     database_url: str | None = None
 
     cors_allow_origins: str = "http://localhost:3000,http://localhost:3001"
@@ -25,6 +31,9 @@ class Settings(BaseSettings):
         "livekit_api_key",
         "livekit_api_secret",
         "database_url",
+        "llama_base_url",
+        "whisper_base_url",
+        "kokoro_base_url",
         mode="before",
     )
     @classmethod

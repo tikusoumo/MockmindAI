@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+  PYTHONUNBUFFERED=1
 
 WORKDIR /app/apps/backend
 
@@ -15,7 +15,8 @@ COPY apps/backend/ ./
 
 # Install Python deps
 RUN python -m pip install --no-cache-dir --upgrade pip \
-  && python -m pip install --no-cache-dir .
+  && python -m pip install --no-cache-dir . \
+  && python -m agent.voice_agent download-files
 
 EXPOSE 8000
 

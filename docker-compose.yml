@@ -54,7 +54,7 @@ services:
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
-    command: python -m agent.voice_agent start
+    command: python -m agent.voice_agent dev
     environment:
       APP_ENV: ${APP_ENV:-dev}
       # LiveKit
@@ -73,10 +73,17 @@ services:
     build:
       context: .
       dockerfile: apps/platform/Dockerfile
+    command: bun run dev
     environment:
+      NODE_ENV: development
+      WATCHPACK_POLLING: "true"
       NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
+    volumes:
+      - ./apps/platform:/app/apps/platform
+      - /app/apps/platform/node_modules
+      - /app/apps/platform/.next
     depends_on:
       - backend
 

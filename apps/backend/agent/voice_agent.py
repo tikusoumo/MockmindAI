@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
-
-from livekit import agents, rtc
+import sys
+from livekit import agents
 from livekit.agents import JobContext, WorkerOptions, cli, JobProcess
 from livekit.plugins import openai, silero
-
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from .settings import settings
 
@@ -15,7 +14,7 @@ logger = logging.getLogger("voice-agent")
 
 class VoiceAgent(agents.Agent):
     """
-    Voice Agent implementation matching the reference agent.py but adapted for Monorepo structure.
+    Voice Agent implementation matching the reference agent.py.
     Uses local models via OpenAI plugin interface.
     """
     def __init__(self) -> None:
@@ -23,7 +22,7 @@ class VoiceAgent(agents.Agent):
             instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
             You eagerly assist users with their questions by providing information from your extensive knowledge.
             Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
+            You are curious, friendly, and have a sense of humor."""
         )
 
     @agents.function_tool()
@@ -59,18 +58,17 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
     
     # Configure models from settings
-    llama_model = settings.llama_model
-    llama_base_url = settings.llama_base_url
-
+    # Note: Using host.docker.internal URLs from settings by default for Docker execution
+    
     session = agents.AgentSession(
         stt=openai.STT(
             base_url=settings.whisper_base_url,
-            model="Systran/faster-whisper-small", # Model name usually ignored by local whisper servers but required
+            model="Systran/faster-whisper-small", 
             api_key="no-key-needed"
         ),
         llm=openai.LLM(
-            base_url=llama_base_url,
-            model=llama_model,
+            base_url=settings.llama_base_url,
+            model=settings.llama_model,
             api_key="no-key-needed"
         ),
         tts=openai.TTS(
@@ -79,9 +77,18 @@ async def entrypoint(ctx: JobContext):
             voice="af_nova",
             api_key="no-key-needed"
         ),
+        turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=True,
     )
+
+    @session.on("user_speech_committed")
+    def on_speech_committed(msg):
+        logger.info(f"USER SPEECH COMMITTED: {msg}")
+
+    @session.on("agent_speech_committed")
+    def on_agent_speech(msg):
+        logger.info(f"AGENT SPEECH GENERATED: {msg}")
 
     await session.start(
         agent=VoiceAgent(),
@@ -99,9 +106,10 @@ def create_worker_options() -> WorkerOptions:
 
 def run_worker():
     """Run the LiveKit worker."""
-    if not settings.livekit_url or not settings.livekit_api_key or not settings.livekit_api_secret:
-        logger.error("LiveKit credentials not configured")
-        return
+    if "download-files" not in sys.argv:
+        if not settings.livekit_url or not settings.livekit_api_key or not settings.livekit_api_secret:
+            logger.error("LiveKit credentials not configured")
+            return
 
     cli.run_app(create_worker_options())
 

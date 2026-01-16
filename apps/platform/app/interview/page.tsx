@@ -241,6 +241,22 @@ function InterviewSession({ currentUser }: { currentUser: User }) {
             )}>
               {isMicrophoneEnabled ? "You (Mic On)" : "You (Mic Off)"}
             </div>
+            
+             {/* Local Audio Visualizer */}
+             {/* Local Audio Visualizer (Real) */}
+             {isMicrophoneEnabled && (
+                <div className="absolute bottom-14 left-4 h-12 w-32 flex items-center justify-center">
+                     <BarVisualizer
+                        state="listening"
+                        barCount={7}
+                        trackRef={{ participant: localParticipant, source: Track.Source.Microphone }}
+                        className="h-full w-full"
+                        options={{ minHeight: 4, maxHeight: 32 }}
+                        style={{ '--lk-va-bar-bg': '#6366f1' } as React.CSSProperties}
+                    />
+                </div>
+             )}
+
           </div>
         </Card>
       </div>
@@ -303,3 +319,5 @@ function LocalVideoView() {
 
     return <VideoTrack trackRef={localTrack} className="h-full w-full object-cover" />;
 }
+
+

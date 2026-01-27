@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .routers.data import router as data_router
 from .routers.health import router as health_router
 from .routers.livekit import router as livekit_router
+from .routers.auth import router as auth_router
 from .settings import settings
 
 app = FastAPI(title="AI Voice Agent Backend")
@@ -33,3 +34,4 @@ def hello() -> dict[str, str]:
 app.include_router(health_router)
 app.include_router(livekit_router)
 app.include_router(data_router)
+app.include_router(auth_router)

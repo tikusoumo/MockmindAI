@@ -12,6 +12,8 @@ class User(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
+    email: Optional[str] = Field(default=None, index=True)
+    password_hash: Optional[str] = None
     role: str
     avatar: str
     level: str

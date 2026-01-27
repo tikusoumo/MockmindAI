@@ -14,6 +14,8 @@ export interface InterviewTemplate {
   difficulty: 'Easy' | 'Medium' | 'Hard';
   icon: string;
   color: string;
+  type: 'Technical' | 'Aptitude' | 'Machine Coding' | 'Behavioral' | 'HR' | 'Custom';
+  questions?: string[];
 }
 
 export interface ProgressStat {
@@ -118,6 +120,7 @@ export const interviewTemplates: InterviewTemplate[] = [
     difficulty: "Hard",
     icon: "Code",
     color: "bg-blue-500/10 text-blue-500",
+    type: "Technical",
   },
   {
     id: "aptitude-round",
@@ -127,6 +130,7 @@ export const interviewTemplates: InterviewTemplate[] = [
     difficulty: "Medium",
     icon: "Brain",
     color: "bg-purple-500/10 text-purple-500",
+    type: "Aptitude",
   },
   {
     id: "hr-round",
@@ -136,6 +140,27 @@ export const interviewTemplates: InterviewTemplate[] = [
     difficulty: "Easy",
     icon: "Users",
     color: "bg-green-500/10 text-green-500",
+    type: "HR",
+  },
+  {
+    id: "machine-coding-round",
+    title: "Machine Coding",
+    description: "Live coding and system implementation.",
+    duration: "60 min",
+    difficulty: "Hard",
+    icon: "Code", // Reusing Code icon for now, or could use Terminal if available
+    color: "bg-orange-500/10 text-orange-500",
+    type: "Machine Coding",
+  },
+  {
+    id: "behavioral-round",
+    title: "Behavioral",
+    description: "Soft skills and leadership scenarios.",
+    duration: "45 min",
+    difficulty: "Medium",
+    icon: "Users", // Reusing Users icon
+    color: "bg-pink-500/10 text-pink-500",
+    type: "Behavioral",
   },
 ];
 

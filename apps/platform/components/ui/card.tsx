@@ -1,17 +1,40 @@
 import * as React from "react"
-
 import { cn } from "@/lib/utils"
 
 function Card({
   className,
   size = "default",
+  variant = "glass", // Added variant
   ...props
-}: React.ComponentProps<"div"> & { size?: "default" | "sm" }) {
+}: React.ComponentProps<"div"> & { 
+  size?: "default" | "sm",
+  variant?: "default" | "glass" | "solid"
+}) {
   return (
     <div
       data-slot="card"
       data-size={size}
-      className={cn("ring-foreground/10 bg-card text-card-foreground gap-6 overflow-hidden rounded-xl py-6 text-sm shadow-xs ring-1 has-[>img:first-child]:pt-0 data-[size=sm]:gap-4 data-[size=sm]:py-4 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl group/card flex flex-col", className)}
+      data-variant={variant}
+      className={cn(
+        // Base structure
+        "flex flex-col gap-6 rounded-xl py-6 text-sm shadow-sm overflow-hidden",
+        "has-[>img:first-child]:pt-0 data-[size=sm]:gap-4 data-[size=sm]:py-4",
+        "*:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl group/card",
+        
+        // Variants
+        variant === "default" && "bg-card text-card-foreground border border-border",
+        variant === "solid" && "bg-secondary/50 border-none",
+        variant === "glass" && [
+          "backdrop-blur-xl bg-white/5 dark:bg-slate-950/40",
+          "border border-white/10 dark:border-white/5",
+          "shadow-xl shadow-black/5"
+        ],
+
+        // Hover Effect
+        "transition-all duration-300 hover:shadow-2xl hover:border-primary/30 hover:-translate-y-1",
+        
+        className
+      )}
       {...props}
     />
   )
@@ -22,7 +45,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card-header"
       className={cn(
-        "gap-1 rounded-t-xl px-6 group-data-[size=sm]/card:px-4 [.border-b]:pb-6 group-data-[size=sm]/card:[.border-b]:pb-4 group/card-header @container/card-header grid auto-rows-min items-start has-data-[slot=card-action]:grid-cols-[1fr_auto] has-data-[slot=card-description]:grid-rows-[auto_auto]",
+        "gap-1 px-6 group-data-[size=sm]/card:px-4 flex flex-col justify-center",
         className
       )}
       {...props}
@@ -34,7 +57,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-title"
-      className={cn("text-base leading-normal font-medium group-data-[size=sm]/card:text-sm", className)}
+      className={cn("text-lg font-semibold tracking-tight text-foreground/90 group-hover/card:text-primary transition-colors", className)}
       {...props}
     />
   )
@@ -44,20 +67,7 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-description"
-      className={cn("text-muted-foreground text-sm", className)}
-      {...props}
-    />
-  )
-}
-
-function CardAction({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card-action"
-      className={cn(
-        "col-start-2 row-span-2 row-start-1 self-start justify-self-end",
-        className
-      )}
+      className={cn("text-muted-foreground text-sm font-medium", className)}
       {...props}
     />
   )
@@ -77,7 +87,7 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-footer"
-      className={cn("rounded-b-xl px-6 group-data-[size=sm]/card:px-4 [.border-t]:pt-6 group-data-[size=sm]/card:[.border-t]:pt-4 flex items-center", className)}
+      className={cn("px-6 group-data-[size=sm]/card:px-4 pt-0 flex items-center", className)}
       {...props}
     />
   )
@@ -88,7 +98,6 @@ export {
   CardHeader,
   CardFooter,
   CardTitle,
-  CardAction,
   CardDescription,
   CardContent,
 }

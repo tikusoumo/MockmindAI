@@ -24,6 +24,7 @@ export const fallbackInterviewTemplates: InterviewTemplate[] = [
     difficulty: "Hard",
     icon: "Code",
     color: "bg-blue-500/10 text-blue-500",
+    type: "Technical",
   },
   {
     id: "aptitude-round",
@@ -33,6 +34,7 @@ export const fallbackInterviewTemplates: InterviewTemplate[] = [
     difficulty: "Medium",
     icon: "Brain",
     color: "bg-purple-500/10 text-purple-500",
+    type: "Aptitude",
   },
   {
     id: "hr-round",
@@ -42,6 +44,7 @@ export const fallbackInterviewTemplates: InterviewTemplate[] = [
     difficulty: "Easy",
     icon: "Users",
     color: "bg-green-500/10 text-green-500",
+    type: "HR",
   },
 ];
 

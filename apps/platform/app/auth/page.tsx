@@ -9,8 +9,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { backendPost } from "@/lib/backend";
 
 type AuthTab = "login" | "signup";
+
+interface AuthResponse {
+  user: {
+    name: string;
+    role: string;
+    avatar: string;
+    level: string;
+  };
+  token: string;
+}
 
 export default function AuthPage() {
   const router = useRouter();
@@ -30,12 +41,13 @@ export default function AuthPage() {
     setLoading(true);
 
     try {
-      // Demo-only: no backend hooked up yet.
-      await new Promise((r) => setTimeout(r, 600));
-      toast.success("Signed in (demo)");
-      router.push("/");
-    } catch {
-      toast.error("Could not sign in");
+      const data = await backendPost<AuthResponse>("/api/auth/login", login);
+      localStorage.setItem("auth_token", data.token);
+      toast.success("Signed in successfully");
+      // Force reload to update context with new token
+      window.location.href = "/";
+    } catch (err: any) {
+      toast.error(err.message || "Invalid credentials");
     } finally {
       setLoading(false);
     }
@@ -57,12 +69,12 @@ export default function AuthPage() {
     setLoading(true);
 
     try {
-      // Demo-only: no backend hooked up yet.
-      await new Promise((r) => setTimeout(r, 700));
-      toast.success("Account created (demo)");
-      router.push("/");
-    } catch {
-      toast.error("Could not create account");
+      const data = await backendPost<AuthResponse>("/api/auth/signup", signup);
+      localStorage.setItem("auth_token", data.token);
+      toast.success("Account created successfully");
+      window.location.href = "/";
+    } catch (err: any) {
+      toast.error(err.message || "Could not create account");
     } finally {
       setLoading(false);
     }

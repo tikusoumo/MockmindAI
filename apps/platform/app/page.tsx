@@ -144,20 +144,20 @@ export default function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {interviewTemplates.map((template) => (
           <Card key={template.id} className="group relative overflow-hidden transition-all hover:shadow-md hover:border-primary/50 cursor-pointer">
-            <CardHeader className="pb-2">
-              <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center mb-2", template.color)}>
+            <CardHeader className="p-4 pb-2">
+              <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center mb-2", template.color)}>
                 {/* Dynamic icon rendering based on template.icon string would go here, simplified for now */}
-                {template.icon === 'Code' && <Zap className="h-5 w-5" />}
-                {template.icon === 'Brain' && <Target className="h-5 w-5" />}
-                {template.icon === 'Users' && <Trophy className="h-5 w-5" />}
+                {template.icon === 'Code' && <Zap className="h-4 w-4" />}
+                {template.icon === 'Brain' && <Target className="h-4 w-4" />}
+                {template.icon === 'Users' && <Trophy className="h-4 w-4" />}
               </div>
-              <CardTitle className="text-lg">{template.title}</CardTitle>
-              <CardDescription className="line-clamp-1">{template.description}</CardDescription>
+              <CardTitle className="text-base">{template.title}</CardTitle>
+              <CardDescription className="line-clamp-1 text-xs">{template.description}</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between text-sm text-muted-foreground mt-2">
+            <CardContent className="p-4 pt-0">
+              <div className="flex items-center justify-between text-xs text-muted-foreground mt-2">
                 <span>{template.duration}</span>
-                <Badge variant="secondary" className="text-xs">{template.difficulty}</Badge>
+                <Badge variant="secondary" className="text-[10px] px-1.5 h-5">{template.difficulty}</Badge>
               </div>
             </CardContent>
             <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />

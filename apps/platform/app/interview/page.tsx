@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { 
   Mic, 
   MicOff, 
@@ -9,8 +9,14 @@ import {
   PhoneOff, 
   MessageSquare,
   MoreVertical,
-  Loader2
+  Loader2,
+  Maximize2,
+  Minimize2
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { useTemplates } from "@/hooks/useTemplates";
+import { InterviewTemplate } from "@/data/mockData";
+import { CodeEditor } from "@/components/interview/CodeEditor";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -33,10 +39,29 @@ import "@livekit/components-styles";
 import { RoomEvent, ConnectionState, LocalParticipant, Track } from "livekit-client";
 
 export default function InterviewPage() {
+  return (
+    <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>}>
+      <InterviewPageContent />
+    </Suspense>
+  );
+}
+
+function InterviewPageContent() {
   const currentUser = useBackendData<User>("/api/user", fallbackCurrentUser);
   const [token, setToken] = useState<string>("");
   const [url, setUrl] = useState<string>("");
-  const [roomName, setRoomName] = useState("interview-" + Math.random().toString(36).substring(7));
+  const [roomName, setRoomName] = useState(() => "interview-" + Math.random().toString(36).substring(7));
+  const searchParams = useSearchParams();
+  const templateId = searchParams.get("template");
+  const { templates, isLoaded } = useTemplates();
+  const [template, setTemplate] = useState<InterviewTemplate | undefined>(undefined);
+
+  useEffect(() => {
+    if (isLoaded && templateId) {
+      const t = templates.find(t => t.id === templateId);
+      if (t) setTemplate(t);
+    }
+  }, [isLoaded, templateId, templates]);
 
   useEffect(() => {
     (async () => {
@@ -75,18 +100,20 @@ export default function InterviewPage() {
       video={true} // Enable video if desired, currently page UI assumes video
       className="flex h-full flex-col gap-4"
     >
-      <InterviewSession currentUser={currentUser} />
+      <InterviewSession currentUser={currentUser} template={template} />
       <RoomAudioRenderer />
     </LiveKitRoom>
   );
 }
 
-function InterviewSession({ currentUser }: { currentUser: User }) {
+function InterviewSession({ currentUser, template }: { currentUser: User; template?: InterviewTemplate }) {
   const { state: agentState, audioTrack: agentAudioTrack } = useVoiceAssistant();
   const roomState = useConnectionState();
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
   
   const [elapsedTime, setElapsedTime] = useState(0);
+  const isCodingRound = template?.type === "Machine Coding";
+  const [code, setCode] = useState("// Write your solution here...\n\nfunction solution() {\n  \n}");
 
   // Timer effect
   useEffect(() => {
@@ -123,7 +150,7 @@ function InterviewSession({ currentUser }: { currentUser: User }) {
         <div className="min-w-0">
           <div className="flex items-center gap-3">
             <h1 className="min-w-0 truncate text-2xl font-bold leading-none">
-              Tech Round: React & System Design
+              {template ? template.title : "Tech Round: React & System Design"}
             </h1>
             <Badge
               variant="outline"
@@ -134,6 +161,11 @@ function InterviewSession({ currentUser }: { currentUser: User }) {
             <span className="shrink-0 tabular-nums text-sm text-muted-foreground">
               {formatTime(elapsedTime)}
             </span>
+             {template && (
+                <Badge variant="secondary" className="hidden sm:inline-flex">
+                    {template.type}
+                </Badge>
+             )}
           </div>
         </div>
         <Button variant="outline" size="sm">
@@ -141,6 +173,100 @@ function InterviewSession({ currentUser }: { currentUser: User }) {
         </Button>
       </div>
 
+      {isCodingRound ? (
+        <div className="grid flex-1 gap-4 lg:grid-cols-2">
+           {/* Code Editor Area */}
+           <div className="flex flex-col gap-2 h-full min-h-[400px]">
+              <Card className="flex-1 overflow-hidden border-zinc-800 bg-zinc-950 p-0">
+                  <CodeEditor 
+                    value={code} 
+                    onChange={(val) => setCode(val || "")} 
+                    language="javascript" 
+                  />
+              </Card>
+           </div>
+
+           {/* Video Side Area */}
+           <div className="flex flex-col gap-4">
+              {/* AI Interviewer - Smaller in coding round */}
+              <Card className={cn(
+                "relative flex flex-1 flex-col items-center justify-center overflow-hidden transition-all duration-500 min-h-[200px]",
+                "bg-linear-to-b from-indigo-950 to-slate-950",
+                isAgentSpeaking ? "border-indigo-500 shadow-[0_0_30px_-5px_rgba(99,102,241,0.3)]" : "border-indigo-500/20"
+              )}>
+                {/* Visualizer Background */}
+                 <div className="absolute inset-0 flex items-center justify-center opacity-20">
+                     {agentAudioTrack && (
+                        <div className="h-full w-full flex items-center justify-center px-8">
+                            <BarVisualizer
+                                state={agentState}
+                                trackRef={{ publication: agentAudioTrack.publication, participant: agentAudioTrack.participant, source: Track.Source.Microphone }}
+                                barCount={5}
+                                options={{ minHeight: 10, maxHeight: 40 }}
+                                className="h-full w-full"
+                            />
+                        </div>
+                     )}
+                  </div>
+
+                  <div className="z-10 flex flex-row items-center gap-4 px-4">
+                    <div className="relative">
+                      {isAgentSpeaking && (
+                        <div className="absolute -inset-2 rounded-full bg-indigo-500/20 blur-lg animate-pulse"></div>
+                      )}
+                      <Avatar className={cn(
+                        "h-16 w-16 border-2 transition-all duration-300",
+                        isAgentSpeaking ? "border-indigo-500 scale-105" : "border-indigo-500/30"
+                      )}>
+                        <AvatarImage src="https://i.pravatar.cc/150?u=ai-interviewer" />
+                        <AvatarFallback>AI</AvatarFallback>
+                      </Avatar>
+                    </div>
+                    
+                    <div className="text-left space-y-0.5">
+                      <h3 className="text-base font-semibold text-white">Sarah (Tech Lead)</h3>
+                      <p className={cn(
+                        "text-xs font-medium transition-colors duration-300",
+                        isAgentSpeaking ? "text-indigo-300" : 
+                        isAgentThinking ? "text-yellow-400" : "text-slate-400"
+                      )}>
+                        {isAgentSpeaking ? "Speaking..." : 
+                         isAgentThinking ? "Thinking..." : "Listening..."}
+                      </p>
+                    </div>
+                  </div>
+              </Card>
+
+              {/* User View - Smaller */}
+              <Card className={cn(
+                "relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-zinc-900 transition-all duration-300 min-h-[200px]",
+                "border-zinc-800"
+              )}>
+                {!isCameraEnabled ? (
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                        <Avatar className="h-16 w-16 border-2 border-zinc-700 mb-1">
+                            <AvatarImage src={currentUser?.avatar} />
+                            <AvatarFallback>{currentUser?.name?.[0]}</AvatarFallback>
+                        </Avatar>
+                        <p className="text-sm font-semibold text-white">{currentUser?.name}</p>
+                    </div>
+                ) : (
+                    <div className="absolute inset-0 bg-zinc-800">
+                         <LocalVideoView /> 
+                    </div>
+                )}
+                 <div className="absolute bottom-2 left-2">
+                    <div className={cn(
+                      "backdrop-blur-md px-2 py-0.5 rounded text-xs font-medium transition-colors",
+                      isMicrophoneEnabled ? "bg-green-500/80 text-white" : "bg-black/50 text-white"
+                    )}>
+                      {isMicrophoneEnabled ? "Mic On" : "Mic Off"}
+                    </div>
+                  </div>
+              </Card>
+           </div>
+        </div>
+      ) : (
       <div className="grid flex-1 gap-4 lg:grid-cols-2">
         {/* AI Interviewer View */}
         <Card className={cn(
@@ -260,6 +386,7 @@ function InterviewSession({ currentUser }: { currentUser: User }) {
           </div>
         </Card>
       </div>
+      )}
 
       {/* Controls Bar */}
       <Card className="p-4">

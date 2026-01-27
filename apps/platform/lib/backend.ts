@@ -12,12 +12,16 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const backendUrl = getBackendUrl();
   const url = `${backendUrl}${path.startsWith("/") ? path : `/${path}`}`;
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem("auth_token") : null;
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+    ...(init?.headers ?? {}),
+  };
+
   const res = await fetch(url, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
+    headers,
   });
 
   if (!res.ok) {

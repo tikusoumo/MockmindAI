@@ -17,6 +17,8 @@ import {
   PanelLeft
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LayoutTemplate } from "lucide-react";
+
 
 const sidebarItems = [
   {
@@ -43,6 +45,11 @@ const sidebarItems = [
     title: "Community",
     href: "/community",
     icon: Users,
+  },
+  {
+    title: "Templates",
+    href: "/templates",
+    icon: LayoutTemplate,
   },
   {
     title: "Settings",
@@ -136,6 +143,8 @@ export function Sidebar() {
             </Link>
           ))}
         </nav>
+
+
       </div>
       <div className="border-t p-3">
         <Button

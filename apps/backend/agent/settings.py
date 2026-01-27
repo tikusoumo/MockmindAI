@@ -18,12 +18,6 @@ class Settings(BaseSettings):
 
     google_api_key: str | None = None
 
-    # Local Model Configuration
-    llama_base_url: str = "http://host.docker.internal:11436/v1"
-    llama_model: str = "qwen3-4b"
-    whisper_base_url: str = "http://host.docker.internal:11435/v1"
-    kokoro_base_url: str = "http://host.docker.internal:8880/v1"
-    
     database_url: str | None = None
 
     cors_allow_origins: str = "http://localhost:3000,http://localhost:3001"

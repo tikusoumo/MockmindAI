@@ -12,7 +12,15 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
+    # Local Model Configuration
+    kokoro_base_url: str = "http://host.docker.internal:8880/v1"
+    whisper_base_url: str = "http://host.docker.internal:11435/v1"
+    llama_base_url: str = "http://host.docker.internal:11436/v1"
+    llama_model: str = "llama3.2"  # Default model
+    
+
     livekit_url: str | None = None
+    livekit_public_url: str = "ws://localhost:7880"
     livekit_api_key: str | None = None
     livekit_api_secret: str | None = None
 

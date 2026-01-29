@@ -5,7 +5,7 @@ from typing import Annotated
 
 from livekit import agents, rtc
 from livekit.agents import JobContext, WorkerOptions, cli
-from livekit.plugins import google, silero
+from livekit.plugins import openai, silero
 
 from .settings import settings
 
@@ -13,7 +13,7 @@ logger = logging.getLogger("voice-agent")
 
 
 class VoiceAgent:
-    """LiveKit voice agent with Google STT/TTS capabilities."""
+    """LiveKit voice agent with Local STT/TTS (via OpenAI adapter) capabilities."""
 
     def __init__(self, ctx: JobContext):
         self.ctx = ctx
@@ -23,20 +23,19 @@ class VoiceAgent:
         """Main entrypoint for the voice agent."""
         logger.info(f"Starting voice agent for room: {self.ctx.room.name}")
 
-        # Initialize STT (Speech-to-Text) with Google
-        if not settings.google_api_key:
-            logger.error("Google API key not configured")
-            return
-
-        stt = google.STT(
-            credentials_info={"api_key": settings.google_api_key},
-            languages=["en-US"],
+        # Initialize STT (Speech-to-Text) with Local Whisper (OpenAI compatible)
+        stt = openai.STT(
+            base_url=settings.whisper_base_url,
+            model="whisper-1", # Standard OpenAI model name, usually ignored by local servers or maps to default
+            api_key="no-key-needed",
         )
 
-        # Initialize TTS (Text-to-Speech) with Google
-        tts = google.TTS(
-            credentials_info={"api_key": settings.google_api_key},
-            voice="en-US-Neural2-A",  # You can customize the voice
+        # Initialize TTS (Text-to-Speech) with Local Kokoro (OpenAI compatible)
+        tts = openai.TTS(
+            base_url=settings.kokoro_base_url,
+            model="kokoro",
+            voice="af_bella",  # Kokoro voice, e.g., af_bella, af_nova
+            api_key="no-key-needed",
         )
 
         # Initialize Voice Activity Detection (VAD)
@@ -67,10 +66,11 @@ class VoiceAgent:
 
     def _create_llm(self):
         """Create and configure the LLM for the assistant."""
-        # Using Google's LLM with the API key
-        return google.LLM(
-            credentials_info={"api_key": settings.google_api_key},
-            model="gemini-1.5-flash",  # or "gemini-pro"
+        # Using Local LLaMA (OpenAI compatible)
+        return openai.LLM(
+            base_url=settings.llama_base_url,
+            model=settings.llama_model,
+            api_key="no-key-needed",
         )
 
     def _on_user_speech_committed(self, msg: agents.llm.ChatMessage):

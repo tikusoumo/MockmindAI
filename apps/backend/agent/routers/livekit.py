@@ -67,7 +67,7 @@ async def create_token(body: CreateTokenRequest) -> dict[str, str]:
 
     return {
         "token": token.to_jwt(),
-        "url": str(settings.livekit_url) if settings.livekit_url else "",
+        "url": settings.livekit_public_url,
     }
 
 
@@ -98,5 +98,5 @@ async def create_agent_token(body: CreateTokenRequest) -> dict[str, str]:
 
     return {
         "token": token.to_jwt(),
-        "url": str(settings.livekit_url) if settings.livekit_url else "",
+        "url": settings.livekit_public_url,
     }

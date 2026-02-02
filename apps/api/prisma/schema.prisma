@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            Int     @id @default(autoincrement())
+  name          String
+  email         String? @unique
+  password_hash String?
+  role          String
+  avatar        String
+  level         String
+
+  @@map("users")
+}
+
+model InterviewTemplate {
+  id          String @id
+  title       String
+  description String
+  duration    String
+  difficulty  String
+  icon        String
+  color       String
+
+  @@map("interview_templates")
+}
+
+model ProgressStat {
+  id      Int    @id @default(autoincrement())
+  label   String
+  value   Int
+  change  Int
+  history Json   @default("[]")
+
+  @@map("progress_stats")
+}
+
+model ScheduledSession {
+  id          String @id
+  title       String
+  date        String
+  time        String
+  interviewer String
+
+  @@map("scheduled_sessions")
+}
+
+model Report {
+  id                  String             @id
+  date                String
+  overallScore        Int
+  duration            String
+  hardSkillsScore     Int
+  softSkillsScore     Int
+  radarData           Json               @default("[]")
+  timelineData        Json               @default("[]")
+  fillerWordsAnalysis Json               @default("[]")
+  pacingAnalysis      Json               @default("[]")
+  behavioralAnalysis  Json               @default("{}")
+  swot                Json               @default("{}")
+  resources           Json               @default("[]")
+  questions           QuestionFeedback[]
+  transcripts         TranscriptEntry[]
+
+  @@map("reports")
+}
+
+model QuestionFeedback {
+  id                Int     @id @default(autoincrement())
+  report_id         String
+  question          String
+  userAnswerSummary String
+  aiFeedback        String
+  score             Int
+  improvements      Json    @default("[]")
+  audioUrl          String?
+  report            Report  @relation(fields: [report_id], references: [id])
+
+  @@map("question_feedback")
+}
+
+model TranscriptEntry {
+  id        Int    @id @default(autoincrement())
+  report_id String
+  speaker   String
+  text      String
+  timestamp String
+  report    Report @relation(fields: [report_id], references: [id])
+
+  @@map("transcript_entries")
+}
+
+model CommunityPost {
+  id        String @id
+  author    Json   @default("{}")
+  content   String
+  likes     Int
+  comments  Int
+  timestamp String
+  tags      Json   @default("[]")
+
+  @@map("community_posts")
+}
+
+model PastInterview {
+  id       String @id
+  title    String
+  date     String
+  duration String
+  score    Int
+  type     String
+
+  @@map("past_interviews")
+}

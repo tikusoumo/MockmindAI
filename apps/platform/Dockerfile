@@ -5,12 +5,12 @@ WORKDIR /app
 # Copy workspace manifests first for better layer caching
 COPY package.json bun.lock turbo.json ./
 COPY apps/platform/package.json apps/platform/package.json
-COPY apps/backend/package.json apps/backend/package.json
+COPY apps/api/package.json apps/api/package.json
 COPY packages/eslint-config/package.json packages/eslint-config/package.json
 COPY packages/typescript-config/package.json packages/typescript-config/package.json
 COPY packages/ui/package.json packages/ui/package.json
 
-RUN bun install --frozen-lockfile
+RUN bun install
 
 # Copy the full repo
 COPY . .

@@ -12,11 +12,11 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
-    # Local Model Configuration
-    kokoro_base_url: str = "http://host.docker.internal:8880/v1"
-    whisper_base_url: str = "http://host.docker.internal:11435/v1"
-    llama_base_url: str = "http://host.docker.internal:11436/v1"
-    llama_model: str = "llama3.2"  # Default model
+    # Local Model Configuration - defaults for container-to-container networking
+    kokoro_base_url: str = "http://kokoro:8880/v1"
+    whisper_base_url: str = "http://whisper:80/v1"
+    llama_base_url: str = "http://llama_cpp:11434/v1"
+    llama_model: str = "qwen3-4b"  # Default model matching local-voice-ai
     
 
     livekit_url: str | None = None
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     google_api_key: str | None = None
 
-    database_url: str | None = None
+
 
     cors_allow_origins: str = "http://localhost:3000,http://localhost:3001"
 
@@ -35,7 +35,6 @@ class Settings(BaseSettings):
         "livekit_api_key",
         "livekit_api_secret",
         "google_api_key",
-        "database_url",
         mode="before",
     )
     @classmethod

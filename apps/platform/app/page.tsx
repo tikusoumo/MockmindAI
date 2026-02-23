@@ -45,6 +45,7 @@ import {
   fallbackProgressStats,
   fallbackUpcomingSchedule,
 } from "@/lib/fallback-data";
+import { NewSessionModal } from "@/components/dashboard/NewSessionModal";
 
 export default function Dashboard() {
   const user = useBackendData<User>("/api/user", fallbackCurrentUser);
@@ -129,11 +130,11 @@ export default function Dashboard() {
           <Button variant="outline" asChild>
             <Link href="/history">View History</Link>
           </Button>
-          <Button asChild>
-            <Link href="/interview">
+          <NewSessionModal templates={interviewTemplates}>
+            <Button>
               <Play className="mr-2 h-4 w-4" /> Start New Session
-            </Link>
-          </Button>
+            </Button>
+          </NewSessionModal>
         </div>
       </div>
 

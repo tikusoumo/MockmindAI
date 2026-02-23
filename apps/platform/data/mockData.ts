@@ -1,9 +1,20 @@
-
 export interface User {
   name: string;
   role: string;
   avatar: string;
   level: string;
+}
+
+// Interview mode for RAG-based interviews
+export type InterviewMode = 'learning' | 'strict';
+
+// Document uploaded for template (for RAG)
+export interface TemplateDocument {
+  id: string;
+  name: string;
+  type: 'question_bank' | 'reference' | 'rubric';
+  uploadedAt: string;
+  chunkCount: number;
 }
 
 export interface InterviewTemplate {
@@ -16,6 +27,9 @@ export interface InterviewTemplate {
   color: string;
   type: 'Technical' | 'Aptitude' | 'Machine Coding' | 'Behavioral' | 'HR' | 'Custom';
   questions?: string[];
+  // RAG-related fields
+  documents?: TemplateDocument[];
+  mode?: InterviewMode;
 }
 
 export interface ProgressStat {

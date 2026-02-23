@@ -53,18 +53,29 @@ function InterviewPageContent() {
   const [roomName, setRoomName] = useState(() => "interview-" + Math.random().toString(36).substring(7));
   const searchParams = useSearchParams();
   const templateId = searchParams.get("template");
+  const customMode = searchParams.get("mode");
+  const customTitle = searchParams.get("title");
+  const isCustom = searchParams.get("custom") === "true";
+  
   const { templates, isLoaded } = useTemplates();
   const [template, setTemplate] = useState<InterviewTemplate | undefined>(undefined);
 
+  // Derive effective mode and title
+  const mode = customMode || template?.mode || "strict";
+  const title = isCustom ? (customTitle || "Custom Session") : (template?.title || "Interview");
+
   useEffect(() => {
-    if (isLoaded && templateId) {
+    if (isLoaded && templateId && !isCustom) {
       const t = templates.find(t => t.id === templateId);
       if (t) setTemplate(t);
     }
-  }, [isLoaded, templateId, templates]);
+  }, [isLoaded, templateId, templates, isCustom]);
 
   useEffect(() => {
     (async () => {
+      // Don't fetch if crucial data is missing, but for custom sessions we might not need template
+      if (!process.env.NEXT_PUBLIC_API_URL && !url) return; 
+
       try {
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/livekit/token`, {
           method: "POST",
@@ -72,8 +83,15 @@ function InterviewPageContent() {
           body: JSON.stringify({
             room_name: roomName,
             participant_name: currentUser?.name || "Candidate",
+            metadata: JSON.stringify({
+              mode: mode,
+              templateId: isCustom ? "custom" : templateId,
+              templateTitle: title,
+              isCustom: isCustom
+            }),
           }),
         });
+
         const data = await response.json();
         setToken(data.token);
         setUrl(data.url);
@@ -81,7 +99,7 @@ function InterviewPageContent() {
         console.error("Failed to fetch token", e);
       }
     })();
-  }, [currentUser, roomName]);
+  }, [currentUser, roomName, mode, templateId, template]);
 
   if (!token || !url) {
     return (
@@ -313,7 +331,7 @@ function InterviewSession({ currentUser, template }: { currentUser: User; templa
             </div>
             
             <div className="text-center space-y-1">
-              <h3 className="text-xl font-semibold text-white">Sarah (Tech Lead)</h3>
+              <h3 className="text-xl font-semibold text-white">Sarahaaaa (Tech Lead)</h3>
               <p className={cn(
                 "text-sm font-medium transition-colors duration-300",
                 isAgentSpeaking ? "text-indigo-300" : 
@@ -369,16 +387,15 @@ function InterviewSession({ currentUser, template }: { currentUser: User; templa
             </div>
             
              {/* Local Audio Visualizer */}
-             {/* Local Audio Visualizer (Real) */}
              {isMicrophoneEnabled && (
-                <div className="absolute bottom-14 left-4 h-12 w-32 flex items-center justify-center">
+                <div className="absolute bottom-16 left-1/2 -translate-x-1/2 h-16 w-48 flex items-center justify-center z-20 pointer-events-none">
                      <BarVisualizer
-                        state="listening"
+                        state="speaking" 
                         barCount={7}
                         trackRef={{ participant: localParticipant, source: Track.Source.Microphone }}
                         className="h-full w-full"
-                        options={{ minHeight: 4, maxHeight: 32 }}
-                        style={{ '--lk-va-bar-bg': '#6366f1' } as React.CSSProperties}
+                        options={{ minHeight: 8, maxHeight: 48 }}
+                        style={{ color: "rgb(34, 197, 94)" }}
                     />
                 </div>
              )}

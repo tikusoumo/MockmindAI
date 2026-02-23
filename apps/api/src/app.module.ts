@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { PrismaService } from './prisma.service';
 import { LivekitModule } from './livekit/livekit.module';
 import { DataModule } from './data/data.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -14,10 +15,12 @@ import { DataModule } from './data/data.module';
     }),
     LivekitModule,
     DataModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService, PrismaService],
   exports: [PrismaService],
 })
 export class AppModule {}
+
 

@@ -26,6 +26,18 @@ class Settings(BaseSettings):
 
     google_api_key: str | None = None
 
+    # Qdrant Vector Store for RAG
+    qdrant_url: str = "http://qdrant:6333"
+
+    # --- Modular Provider Configuration ---
+    llm_provider: str = "openai"
+    stt_provider: str = "openai"
+    tts_provider: str = "openai"
+
+    groq_api_key: str | None = None
+    deepgram_api_key: str | None = None
+    eleven_api_key: str | None = None
+
 
 
     cors_allow_origins: str = "http://localhost:3000,http://localhost:3001"
@@ -35,6 +47,9 @@ class Settings(BaseSettings):
         "livekit_api_key",
         "livekit_api_secret",
         "google_api_key",
+        "groq_api_key",
+        "deepgram_api_key",
+        "eleven_api_key",
         mode="before",
     )
     @classmethod

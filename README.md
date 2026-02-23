@@ -1,6 +1,581 @@
-# AI Voice Agent - Turborepo Monorepo
+<div align="center">
 
-AI Voice Agent platform with real-time voice conversations using LiveKit, Google STT/TTS, and Gemini LLM.
+# MockMind
+
+### AI-Powered Mock Interview Platform
+
+**Practice like it's real. Improve like it's personal.**
+
+MockMind is an intelligent mock interview platform that simulates real interview rounds — Technical, Behavioural, HR, and Machine Coding — using a live AI voice agent. It analyses your speech patterns, detects filler words, measures tone firmness and confidence, and optionally evaluates facial expressions through computer vision. After every session, you receive a detailed performance report with personalised improvement resources and a scheduled reminder system to keep you on track before your next interview.
+
+---
+
+</div>
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Interview Modes](#interview-modes)
+- [AI & Analysis Pipeline](#ai--analysis-pipeline)
+- [Architecture](#architecture)
+- [Monorepo Structure](#monorepo-structure)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+- [Environment Variables](#environment-variables)
+- [Running in Development](#running-in-development)
+- [Running with Docker](#running-with-docker)
+- [Running with Vagrant (Recommended for Windows)](#running-with-vagrant-recommended-for-windows)
+- [API Reference](#api-reference)
+- [Roadmap](#roadmap)
+- [B2B Product — HireMind](#b2b-product--hiremind)
+- [Contributing](#contributing)
+
+---
+
+## Overview
+
+MockMind is a **B2C SaaS platform** where candidates can practice job interviews with an AI-driven voice agent that behaves exactly like a real interviewer. The platform covers the full spectrum of interview rounds, delivers real-time conversation, and produces in-depth post-session reports powered by NLP and computer vision.
+
+The system runs as a cloud-ready monorepo containing three independently deployable applications:
+
+| App | Technology | Purpose |
+|-----|-----------|---------|
+| `apps/platform` | Next.js 15 | User-facing web application |
+| `apps/api` | NestJS + Prisma | REST API gateway & business logic |
+| `apps/ai-services` | FastAPI + LiveKit Agents | Voice AI, NLP analysis, CV analysis, RAG |
+
+---
+
+## Key Features
+
+### Live AI Voice Interviewer
+- Real-time voice conversation powered by LiveKit WebRTC
+- Multilingual turn detection and Voice Activity Detection (VAD) via Silero
+- Noise cancellation built into the pipeline
+- Supports multiple STT backends: **Deepgram**, **OpenAI Whisper**, **Google STT**
+- Supports multiple TTS backends: **ElevenLabs**, **Google TTS**, **OpenAI TTS**
+- LLM backends: **Google Gemini**, **Groq**, **OpenAI GPT**
+
+### Interview Round Simulation
+- **Technical** — Data structures, algorithms, system design questions
+- **Behavioural** — STAR-method responses, interpersonal skills
+- **HR** — Culture fit, salary negotiation, career goals
+- **Machine Coding** — Live coding walkthrough and explanation
+- **Custom Rounds** — Users can create fully custom interview templates
+
+### Two Interview Modes
+| Mode | Description |
+|------|-------------|
+| **Strict Mode** | Simulates a real interview — no coaching during the session; all feedback is saved to the post-session report |
+| **Learning Mode** | Active coaching — the AI gives real-time feedback, STAR-method guidance, and follow-up questions |
+
+### NLP Speech Analysis
+After every session the platform analyses the candidate's speech transcript:
+- **Filler word detection** — "um", "uh", "like", "you know", "basically", etc.
+- **Words-per-minute (WPM)** calculation and pacing timeline
+- **Fluency score** and **clarity score** (0–100)
+- **Confidence tone** analysis via semantic scoring
+- **Answer relevance** and depth scoring via LLM semantic analysis
+- **STAR-method coverage** detection in behavioural answers
+
+### Computer Vision Analysis
+Using MediaPipe face mesh via the candidate's webcam:
+- **Eye contact rating** — tracking gaze direction relative to camera
+- **Confidence score** — head pose and facial expression signals
+- **Engagement score** — micro-expression and attention analysis
+- **Posture quality** rating
+
+### Detailed Post-Session Report
+Each completed interview generates a report containing:
+- Overall score and category breakdown
+- Per-question scores and model answers
+- Speech analysis charts (WPM pacing, filler word heatmap)
+- Behavioural/CV analysis summary
+- Personalised improvement recommendations
+- Curated learning resources (articles, courses, YouTube playlists) tailored to weak areas
+
+### RAG-Powered Question Bank
+- Upload your **CV/resume** or a **job description** and the AI agent anchors its questions to those documents
+- Built on **LangChain + Qdrant** vector search with local sentence-transformer embeddings
+- Ensures questions are contextually relevant to the specific role the candidate is targeting
+
+### Scheduler & Notification System
+- Built-in **cron job scheduler** to set daily or weekly practice reminders
+- Notifications delivered via **Email** and/or **SMS**
+- Configurable reminder frequency and time slots
+- Countdown-to-interview feature: ramps up notification frequency as interview date approaches
+
+### Custom Interview Builder
+Users can:
+- Define their own question sets per round type
+- Set difficulty level, time limit, and topic focus
+- Save and reuse templates
+- Share templates with the community
+
+### Dashboard & Progress Tracking
+- Skills radar chart across multiple competency areas
+- Session history with side-by-side score comparisons
+- Progress trend charts over time
+- Upcoming scheduled sessions calendar view
+- Latest AI-generated insights panel
+
+---
+
+## Interview Modes
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Session Setup                            │
+│  Choose round type + mode + optional CV/JD upload               │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+           ┌─────────────▼─────────────┐
+           │                           │
+    ┌──────▼──────┐             ┌──────▼──────┐
+    │  STRICT     │             │  LEARNING   │
+    │  MODE       │             │  MODE       │
+    │             │             │             │
+    │ Real        │             │ Coaching    │
+    │ interview   │             │ + feedback  │
+    │ simulation  │             │ mid-session │
+    └──────┬──────┘             └──────┬──────┘
+           └─────────────┬─────────────┘
+                         │
+           ┌─────────────▼─────────────┐
+           │     Post-Session Report   │
+           │  Scores + NLP + CV + Tips │
+           └───────────────────────────┘
+```
+
+---
+
+## AI & Analysis Pipeline
+
+```
+Candidate Audio ──► Deepgram/Whisper STT ──► Transcript
+                                                  │
+                          ┌───────────────────────┤
+                          │                       │
+                    NLP Analysis            LLM (Gemini/
+                    ┌────────────┐          Groq/OpenAI)
+                    │ Filler     │               │
+                    │ Words      │          Interview
+                    │ WPM/Pacing │          Questions &
+                    │ Fluency    │          Follow-ups
+                    │ Clarity    │               │
+                    └────────────┘          TTS Response
+                          │            (ElevenLabs/Google)
+                    Semantic Analyzer          │
+                    ┌────────────┐         Candidate
+                    │ STAR check │         hears AI voice
+                    │ Confidence │
+                    │ Relevance  │
+                    └────────────┘
+                          │
+Candidate Video ──► MediaPipe CV ──► BehavioralAnalysis
+                    ┌────────────┐
+                    │ Eye contact│
+                    │ Confidence │
+                    │ Engagement │
+                    │ Posture    │
+                    └────────────┘
+                          │
+                    ┌─────▼──────┐
+                    │  REPORT    │
+                    │ Generator  │
+                    └─────┬──────┘
+                          │
+              ┌───────────▼───────────┐
+              │  Personalised Report  │
+              │  + Resources + Cron   │
+              │    Reminders          │
+              └───────────────────────┘
+```
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                          MockMind Platform                       │
+│                                                                  │
+│   ┌──────────────┐     ┌──────────────┐     ┌────────────────┐  │
+│   │  Next.js 15  │────►│  NestJS API  │────►│  PostgreSQL    │  │
+│   │  (Platform)  │     │  (Gateway)   │     │  (Prisma ORM)  │  │
+│   │  Port 3000   │     │  Port 3001   │     │  Port 5432     │  │
+│   └──────┬───────┘     └──────────────┘     └────────────────┘  │
+│          │                                                       │
+│          │ LiveKit WebRTC                                        │
+│          ▼                                                       │
+│   ┌──────────────┐     ┌──────────────┐     ┌────────────────┐  │
+│   │  LiveKit     │────►│  FastAPI     │────►│  Qdrant        │  │
+│   │  Server      │     │  AI Services │     │  Vector Store  │  │
+│   │  (WebRTC)    │     │  Port 8000   │     │  (RAG)         │  │
+│   └──────────────┘     └──────┬───────┘     └────────────────┘  │
+│                               │                                  │
+│              ┌────────────────┼────────────────┐                 │
+│              ▼                ▼                ▼                 │
+│        ┌──────────┐   ┌──────────┐   ┌──────────────┐           │
+│        │ STT      │   │  LLM     │   │  TTS         │           │
+│        │ Deepgram │   │  Gemini  │   │  ElevenLabs  │           │
+│        │ Whisper  │   │  Groq    │   │  Google TTS  │           │
+│        └──────────┘   └──────────┘   └──────────────┘           │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Monorepo Structure
+
+```
+MockMind/
+├── apps/
+│   ├── platform/              # Next.js 15 frontend
+│   │   ├── app/
+│   │   │   ├── page.tsx           # Dashboard
+│   │   │   ├── interview/         # Live interview room
+│   │   │   ├── report/            # Post-session reports
+│   │   │   ├── schedule/          # Session scheduler & cron reminders
+│   │   │   ├── history/           # Past sessions & progress
+│   │   │   ├── templates/         # Interview template browser
+│   │   │   ├── study-planner/     # Resource library & study plan
+│   │   │   ├── community/         # Community templates
+│   │   │   ├── settings/          # Account & notification settings
+│   │   │   └── admin/             # Admin management panel
+│   │   └── components/
+│   │       ├── dashboard/         # ProgressChart, SkillsRadar, Insights
+│   │       ├── interview/         # Live interview UI components
+│   │       └── ui/                # shadcn/ui design system
+│   │
+│   ├── api/                   # NestJS REST API gateway
+│   │   ├── src/
+│   │   │   ├── livekit/           # Room & token management
+│   │   │   ├── data/              # Templates, users, progress data
+│   │   │   └── reports/           # Report storage & retrieval
+│   │   └── prisma/
+│   │       └── schema.prisma      # DB schema (Users, Templates, Reports…)
+│   │
+│   └── ai-services/           # FastAPI + LiveKit Agents (Python)
+│       └── agent/
+│           ├── voice_agent.py         # LiveKit AgentSession — core AI loop
+│           ├── session_collector.py   # Records transcripts & metadata
+│           ├── models.py              # Pydantic models
+│           ├── settings.py            # Environment config
+│           ├── analysis/
+│           │   ├── speech_analyzer.py     # Filler words, WPM, fluency
+│           │   ├── semantic_analyzer.py   # STAR, confidence, relevance
+│           │   ├── cv_analyzer.py         # MediaPipe face/pose analysis
+│           │   └── report_generator.py    # Assembles final report
+│           ├── rag/                   # LangChain + Qdrant RAG pipeline
+│           └── routers/               # FastAPI route handlers
+│
+├── packages/
+│   ├── ui/                    # Shared React component library
+│   ├── eslint-config/         # Shared ESLint configs
+│   └── typescript-config/     # Shared tsconfig presets
+│
+├── docker-compose.yml         # Standard stack
+├── docker-compose.gpu.yml     # GPU-accelerated variant
+├── docker-compose.cloud.yml   # Cloud deployment variant
+├── turbo.json                 # Turborepo pipeline config
+└── Vagrantfile                # Linux VM for Windows developers
+```
+
+---
+
+## Tech Stack
+
+### Frontend
+| Technology | Purpose |
+|-----------|---------|
+| Next.js 15 (App Router) | React framework with SSR |
+| TypeScript | Type safety across all UI code |
+| Tailwind CSS | Utility-first styling |
+| shadcn/ui | Accessible component system |
+| Lucide React | Icon library |
+| LiveKit React SDK | WebRTC room & audio/video UI |
+
+### API Gateway
+| Technology | Purpose |
+|-----------|---------|
+| NestJS | Modular Node.js HTTP framework |
+| Prisma ORM | Type-safe database access |
+| PostgreSQL 16 | Primary relational database |
+| pgAdmin 4 | Database management UI |
+
+### AI Services
+| Technology | Purpose |
+|-----------|---------|
+| FastAPI | High-performance Python HTTP framework |
+| LiveKit Agents SDK | Voice agent lifecycle & session management |
+| Silero VAD | Voice activity detection |
+| Deepgram | Premium speech-to-text |
+| OpenAI Whisper | On-device speech-to-text |
+| Google STT/TTS | Google Cloud speech services |
+| ElevenLabs | High-fidelity text-to-speech |
+| Google Gemini | Primary LLM for interview logic |
+| Groq | Ultra-fast LLM inference |
+| OpenAI GPT | Alternative LLM backend |
+| LangChain + LangGraph | RAG orchestration & agentic workflows |
+| Qdrant | Vector database for document search |
+| Sentence Transformers | Local document embeddings |
+| MediaPipe | Face mesh & pose estimation (CV) |
+| OpenCV | Video frame processing |
+| NumPy | Numerical analysis |
+
+### DevOps & Infrastructure
+| Technology | Purpose |
+|-----------|---------|
+| Docker + Docker Compose | Containerised local development |
+| Turborepo | Monorepo build orchestration |
+| Vagrant + VirtualBox | Linux VM for Windows-host developers |
+| Bun | Fast JavaScript package manager |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- **Node.js** ≥ 20 and **Bun** (or npm)
+- **Python** ≥ 3.11
+- **Docker** + **Docker Compose**
+- A **LiveKit** account → [cloud.livekit.io](https://cloud.livekit.io)
+- At least one LLM API key (Gemini, Groq, or OpenAI)
+- At least one STT API key (Deepgram or Google)
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env` at the repo root and fill in the values:
+
+```env
+# ─── Database ──────────────────────────────────────────────
+DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/postgres
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=postgres
+
+# ─── LiveKit ───────────────────────────────────────────────
+LIVEKIT_URL=wss://your-project.livekit.cloud
+LIVEKIT_API_KEY=your_api_key
+LIVEKIT_API_SECRET=your_api_secret
+
+# ─── LLM Providers (at least one required) ─────────────────
+GOOGLE_API_KEY=your_google_gemini_key
+GROQ_API_KEY=your_groq_key
+OPENAI_API_KEY=your_openai_key
+
+# ─── STT / TTS Providers (at least one required) ───────────
+DEEPGRAM_API_KEY=your_deepgram_key
+ELEVENLABS_API_KEY=your_elevenlabs_key
+
+# ─── Notifications (optional) ──────────────────────────────
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=noreply@mockmind.ai
+SMTP_PASS=your_smtp_password
+TWILIO_ACCOUNT_SID=your_twilio_sid
+TWILIO_AUTH_TOKEN=your_twilio_token
+TWILIO_FROM_NUMBER=+12345678900
+
+# ─── App ────────────────────────────────────────────────────
+CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:3001
+APP_ENV=dev
+```
+
+### Obtaining API Keys
+
+| Service | Sign-up URL |
+|---------|------------|
+| LiveKit Cloud | https://cloud.livekit.io |
+| Google AI (Gemini + STT/TTS) | https://console.cloud.google.com |
+| Deepgram | https://console.deepgram.com |
+| Groq | https://console.groq.com |
+| OpenAI | https://platform.openai.com |
+| ElevenLabs | https://elevenlabs.io |
+| Twilio (SMS) | https://www.twilio.com |
+
+---
+
+## Running in Development
+
+Install all dependencies from the repo root:
+
+```sh
+bun install
+```
+
+Run all services concurrently with Turborepo:
+
+```sh
+bun run dev
+```
+
+Or start each service individually:
+
+```sh
+# Frontend (Next.js) — http://localhost:3000
+cd apps/platform && bun run dev
+
+# API gateway (NestJS) — http://localhost:3001
+cd apps/api && bun run start:dev
+
+# AI services (FastAPI) — http://localhost:8000
+cd apps/ai-services
+python -m uvicorn agent.main:app --reload --host 0.0.0.0 --port 8000
+
+# AI voice agent worker
+cd apps/ai-services
+python -m agent.voice_agent start
+```
+
+---
+
+## Running with Docker
+
+```sh
+# Standard stack (CPU inference)
+docker compose up --build
+
+# GPU-accelerated stack (CUDA required)
+docker compose -f docker-compose.gpu.yml up --build
+
+# Cloud-optimised stack
+docker compose -f docker-compose.cloud.yml up --build
+```
+
+Services after startup:
+
+| Service | URL |
+|---------|-----|
+| Platform (frontend) | http://localhost:3000 |
+| AI Services API | http://localhost:8000/docs |
+| API Gateway | http://localhost:3001 |
+| pgAdmin | http://localhost:5050 |
+
+---
+
+## Running with Vagrant (Recommended for Windows)
+
+Vagrant boots a fully configured Ubuntu VM with Docker pre-installed — no WSL2 or manual Linux setup required.
+
+**Install prerequisites on your Windows host:**
+- [Vagrant](https://www.vagrantup.com/downloads)
+- [VirtualBox](https://www.virtualbox.org/wiki/Downloads)
+
+```powershell
+# 1. Boot the VM (first run takes ~5 minutes)
+vagrant up
+
+# 2. SSH into the VM
+vagrant ssh
+
+# 3. Navigate to the project and start the stack
+cd /vagrant
+docker compose up --build
+```
+
+Open from your Windows browser: **http://localhost:3000**  
+The Vagrantfile forwards all relevant ports to your Windows host automatically.
+
+---
+
+## API Reference
+
+The FastAPI AI Services expose an interactive Swagger UI at **http://localhost:8000/docs**.
+
+### Core Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/healthz` | Health check |
+| `POST` | `/livekit/rooms` | Create a LiveKit interview room |
+| `POST` | `/livekit/token` | Generate a participant token |
+| `POST` | `/livekit/agent-token` | Generate an agent token |
+| `POST` | `/documents/upload` | Upload CV or JD for RAG question grounding |
+| `GET` | `/reports/{session_id}` | Retrieve a post-interview report |
+| `GET` | `/data/interview-templates` | List all available interview templates |
+| `GET` | `/data/progress-stats` | Get progress statistics for the logged-in user |
+
+---
+
+## Roadmap
+
+### Phase 1 — Core Platform ✅
+- [x] LiveKit real-time voice interview agent
+- [x] Technical, Behavioural, HR round templates
+- [x] Strict and Learning interview modes
+- [x] Speech analysis: filler words, WPM, fluency score
+- [x] Computer vision: eye contact, confidence, posture
+- [x] Post-interview report generation
+- [x] RAG pipeline: CV/JD document grounding
+- [x] Custom interview template builder
+- [x] Dashboard with progress tracking
+
+### Phase 2 — Growth Features 🚧
+- [ ] Machine Coding round with code execution sandbox
+- [ ] Scheduler & cron-based Email/SMS reminders
+- [ ] Personalised resource recommendations (articles, courses, LeetCode)
+- [ ] Study planner with daily practice goals
+- [ ] Community template sharing marketplace
+- [ ] Mobile-responsive PWA
+
+### Phase 3 — Platform Maturity 📋
+- [ ] Fine-tuned models for deeper confidence & tone analysis
+- [ ] Multi-language support
+- [ ] Peer mock interview matching (human-to-human)
+- [ ] Resume/CV scoring and improvement suggestions
+- [ ] Company-specific interview prep packs
+- [ ] Subscription billing (Stripe integration)
+
+---
+
+## B2B Product — HireMind
+
+> **HireMind** is the enterprise companion product to MockMind, planned for development after the core B2C platform reaches maturity.
+
+HireMind targets **companies and recruitment teams** who want to automate first-round candidate screening using the same AI interview engine.
+
+### Planned HireMind Capabilities
+
+| Feature | Description |
+|---------|-------------|
+| **AI Screening Campaigns** | Companies post a role; candidates receive an async AI interview link |
+| **Bulk Candidate Scoring** | Automated ranking of hundreds of candidates by skill, communication, and behaviour |
+| **Custom Rubric Builder** | HR teams define scoring rubrics aligned to their competency frameworks |
+| **ATS Integrations** | Push ranked candidates directly into Greenhouse, Lever, Workday, etc. |
+| **Bias Reduction Layer** | Anonymised scoring to reduce unconscious hiring bias |
+| **Recruiter Dashboard** | Side-by-side candidate comparison with report deep-dives |
+| **White-label Support** | Host the interviewer under your own brand and domain |
+| **Compliance & Data Privacy** | GDPR / SOC 2 compliant data handling and candidate consent flows |
+
+HireMind will be offered as a separate SaaS subscription targeting SMBs and enterprise recruiting teams.
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Install dependencies: `bun install`
+4. Make your changes and add tests where applicable
+5. Run the linter: `bun run lint`
+6. Commit using conventional commits: `git commit -m "feat: add machine coding round"`
+7. Open a Pull Request against `main`
+
+Please read [AGENTS.md](./AGENTS.md) for agent-specific development guidelines, including how to work with the LiveKit MCP documentation server.
+
+---
+
+<div align="center">
+
+**MockMind** · Practice like it's real. Improve like it's personal.
+
+</div>
 
 ## Quick Start (Vagrant VM)
 

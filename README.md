@@ -16,6 +16,7 @@ MockMind is an intelligent mock interview platform that simulates real interview
 
 - [Overview](#overview)
 - [Key Features](#key-features)
+- [Personalised Resource Hub](#personalised-resource-hub)
 - [Interview Modes](#interview-modes)
 - [AI & Analysis Pipeline](#ai--analysis-pipeline)
 - [Architecture](#architecture)
@@ -88,12 +89,79 @@ Using MediaPipe face mesh via the candidate's webcam:
 
 ### Detailed Post-Session Report
 Each completed interview generates a report containing:
-- Overall score and category breakdown
-- Per-question scores and model answers
-- Speech analysis charts (WPM pacing, filler word heatmap)
-- Behavioural/CV analysis summary
-- Personalised improvement recommendations
-- Curated learning resources (articles, courses, YouTube playlists) tailored to weak areas
+- Overall score and category breakdown (Communication, Technical Depth, Confidence, Engagement)
+- Per-question scores with model answers and gap commentary
+- Speech analysis charts — WPM pacing timeline, filler word frequency heatmap
+- Behavioural/CV analysis summary — eye contact, posture, confidence rating
+- Directional feedback per weaknesses identified in the session
+- **Personalised Resource Hub** — curated links to practice materials, tailored to exactly where the candidate fell short (see section below)
+
+---
+
+## Personalised Resource Hub
+
+After every completed interview MockMind automatically builds a **Personalised Resource Hub** — a curated collection of external practice materials mapped directly to the weaknesses surfaced in that session's report. No generic advice; every link is selected because of a specific gap the AI detected in your answers.
+
+### How It Works
+
+1. The report generator scores each competency area (e.g. System Design, Behavioural, Communication, Problem Solving).
+2. Any area that falls below the target threshold is flagged as a **growth zone**.
+3. The system queries a knowledge graph of hand-curated and community-sourced resources and returns the most relevant matches for each growth zone.
+4. Resources are ranked by type, quality rating, and community upvotes.
+
+### Resource Categories
+
+| Category | Examples |
+|----------|----------|
+| **Articles & Guides** | In-depth written explainers, cheat sheets, structured study guides from sources like freeCodeCamp, Dev.to, Medium, and official documentation |
+| **Videos & Courses** | YouTube tutorials, Udemy/Coursera course recommendations, conference talks — matched to the specific topic you struggled with (e.g. "recursion", "conflict resolution", "system design") |
+| **Practice Platforms** | Direct links to relevant problem sets on LeetCode, HackerRank, Exercism, Pramp, interviewing.io — filtered by topic and difficulty |
+| **Books & Reading Lists** | Curated book recommendations (e.g. *Cracking the Coding Interview*, *System Design Interview*, *The STAR Interview*) with chapter-level suggestions |
+| **People to Follow** | Engineers, hiring managers, career coaches, and educators on LinkedIn, X (Twitter), and YouTube who regularly post content relevant to your weak areas |
+| **Communities & Forums** | Subreddits (r/cscareerquestions, r/ExperiencedDevs), Discord servers, Slack communities, and LinkedIn groups where you can ask questions and get peer feedback |
+| **Podcasts & Newsletters** | Relevant episodes and newsletters filtered by topic so you can learn passively during commutes |
+| **Mock Interview Partners** | Links to peer matching platforms (Pramp, interviewing.io, Meetapro) where you can practise with real humans |
+
+### Example — What You Might See After a Session
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Your Growth Zones This Session                                  │
+├──────────────────────────────────────────────────────────────────┤
+│  ⚠ System Design        Score: 42/100                           │
+│  ⚠ Filler Words         "um"/"like" used 23 times               │
+│  ⚠ STAR Structure       Missing "Result" in 3/4 answers         │
+└──────────────────────────────────────────────────────────────────┘
+
+📚 Resources for System Design
+  → Article : "Grokking System Design" — educative.io
+  → Video   : "System Design Interview" playlist — Gaurav Sen (YouTube)
+  → Practice: system-design-primer — GitHub (donnemartin)
+  → Book    : System Design Interview Vol. 1 & 2 — Alex Xu
+  → Follow  : @GergelyOrosz, @alexxubyte on X for daily system design posts
+  → Community: r/ExperiencedDevs — weekly system design discussion threads
+
+🎙 Resources for Filler Words & Fluency
+  → Article : "How to stop saying um and uh" — Toastmasters.org
+  → Video   : "Eliminate Filler Words" — Jefferson Fisher (YouTube)
+  → Practice: Orai app — AI speech coach with real-time filler word feedback
+  → Follow  : @JeffersonFisher on Instagram/YouTube — communication coach
+  → Community: r/PublicSpeaking — weekly speaking challenges
+
+⭐ Resources for STAR Method
+  → Article : "STAR Method Explained with Examples" — The Muse
+  → Video   : "Behavioural Interview Questions" — Dan Croitor (YouTube)
+  → Practice: MockMind Learning Mode — replay this session in Learning Mode
+  → Book    : "The STAR Interview" — Misha Yurchenko
+```
+
+### Scheduler Integration
+
+Resources don't just live in the report — they feed directly into your **Study Planner**. You can:
+- Add any resource to your **daily practice queue** with one click
+- Set a **daily reminder** (Email or SMS via cron job) that delivers one resource link each day leading up to your interview date
+- Track which resources you've completed and mark them done
+- Get a **weekly digest** summarising your study progress across all flagged areas
 
 ### RAG-Powered Question Bank
 - Upload your **CV/resume** or a **job description** and the AI agent anchors its questions to those documents

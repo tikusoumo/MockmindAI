@@ -147,76 +147,54 @@ server.setup_fnc = prewarm
 
 
 def create_model_components(settings):
-    """Factory to create LLM, STT, and TTS instances based on settings."""
+    """Factory to create LLM, STT, and TTS instances with support for mixing local and online providers."""
     
     # --- STT ---
     if settings.stt_provider == "deepgram":
         stt = deepgram.STT(api_key=settings.deepgram_api_key)
     elif settings.stt_provider == "google":
-        stt = google.STT(api_key=settings.google_api_key)
+        # Google STT requires service account for gRPC; pass file if we have it
+        stt = google.STT(credentials_file=settings.google_credentials_file) if settings.google_credentials_file else google.STT()
     elif settings.stt_provider == "groq":
         stt = groq.STT(api_key=settings.groq_api_key)
-    else: # Default to OpenAI / Local
-        stt = openai.STT(
-            base_url=settings.whisper_base_url,
-            model="Systran/faster-whisper-small",
-            api_key="no-key-needed"
-        )
+    elif settings.stt_provider == "openai":
+        # Check if local or real OpenAI
+        if settings.use_local_ai or (settings.whisper_base_url and ("localhost" in settings.whisper_base_url or "whisper" in settings.whisper_base_url)):
+            stt = openai.STT(base_url=settings.whisper_base_url, model="Systran/faster-whisper-small", api_key="no-key-needed")
+        else:
+            stt = openai.STT(model="whisper-1")
+    else: # Default
+        stt = google.STT() if settings.google_api_key or settings.google_credentials_file else openai.STT()
 
     # --- LLM ---
     if settings.llm_provider == "google":
-        llm = google.LLM(
-            model="gemini-2.0-flash-exp", # Default generic model, can be parameterized
-            api_key=settings.google_api_key
-        )
+        # Gemini LLM supports direct API Key
+        llm = google.LLM(model="gemini-2.0-flash-exp", api_key=settings.google_api_key)
     elif settings.llm_provider == "groq":
-        llm = groq.LLM(
-            model="llama3-8b-8192", # Default generic
-            api_key=settings.groq_api_key
-        )
+        llm = groq.LLM(model="llama3-8b-8192", api_key=settings.groq_api_key)
     elif settings.llm_provider == "openai":
-         # Check if it's actually local (no key) or real OpenAI
-        if settings.llama_base_url and "localhost" in settings.llama_base_url:
-             llm = openai.LLM(
-                base_url=settings.llama_base_url,
-                model=settings.llama_model,
-                api_key="no-key-needed"
-            )
+        if settings.use_local_ai or (settings.llama_base_url and ("localhost" in settings.llama_base_url or "llama" in settings.llama_base_url)):
+             llm = openai.LLM(base_url=settings.llama_base_url, model=settings.llama_model, api_key="no-key-needed")
         else:
              llm = openai.LLM(model="gpt-4o")
+    else:
+        llm = google.LLM(model="gemini-2.0-flash-exp", api_key=settings.google_api_key)
 
-    else: # Default to Local/OpenAI Generic
-        llm = openai.LLM(
-            base_url=settings.llama_base_url,
-            model=settings.llama_model,
-            api_key="no-key-needed"
-        )
-        
     # --- TTS ---
     if settings.tts_provider == "elevenlabs":
         tts = elevenlabs.TTS(api_key=settings.eleven_api_key)
     elif settings.tts_provider == "deepgram":
         tts = deepgram.TTS(api_key=settings.deepgram_api_key)
     elif settings.tts_provider == "google":
-        tts = google.TTS(api_key=settings.google_api_key)
-    elif settings.tts_provider == "openai": # real openai
-         if settings.kokoro_base_url and "localhost" in settings.kokoro_base_url:
-             tts = openai.TTS(
-                base_url=settings.kokoro_base_url,
-                model="kokoro",
-                voice="af_nova",
-                api_key="no-key-needed"
-            )
+        # Google TTS also requires service account for gRPC
+        tts = google.TTS(credentials_file=settings.google_credentials_file) if settings.google_credentials_file else google.TTS()
+    elif settings.tts_provider == "openai":
+         if settings.use_local_ai or (settings.kokoro_base_url and ("localhost" in settings.kokoro_base_url or "kokoro" in settings.kokoro_base_url)):
+             tts = openai.TTS(base_url=settings.kokoro_base_url, model="kokoro", voice="af_sky", api_key="no-key-needed")
          else:
              tts = openai.TTS(model="tts-1", voice="alloy")
-
-    else: # Default to Local/Kokoro
-        tts = openai.TTS(
-            base_url=settings.kokoro_base_url,
-            model="kokoro",
-            voice="af_nova",
-            api_key="no-key-needed"
-        )
+    else:
+        tts = google.TTS()
 
     return stt, llm, tts
 

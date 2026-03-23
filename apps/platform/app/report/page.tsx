@@ -496,7 +496,7 @@ export default function ReportPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{value}</div>
+                  <div className="text-2xl font-bold">{typeof value === 'object' && value !== null ? (value as any).score || JSON.stringify(value) : String(value)}</div>
                 </CardContent>
               </Card>
             ))}

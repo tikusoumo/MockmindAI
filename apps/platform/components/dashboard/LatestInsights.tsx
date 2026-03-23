@@ -29,7 +29,7 @@ export function LatestInsights() {
           <Timer className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{latest.behavioralAnalysis.pace}</div>
+          <div className="text-2xl font-bold">{typeof latest.behavioralAnalysis?.pace === 'object' ? (latest.behavioralAnalysis.pace as any).score : latest.behavioralAnalysis?.pace || 'N/A'}</div>
           <p className="text-xs text-muted-foreground">
             Optimal range
           </p>
@@ -41,7 +41,7 @@ export function LatestInsights() {
           <Mic className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{latest.behavioralAnalysis.fillerWords}</div>
+          <div className="text-2xl font-bold">{typeof latest.behavioralAnalysis?.fillerWords === 'object' ? (latest.behavioralAnalysis.fillerWords as any).score : latest.behavioralAnalysis?.fillerWords || 'N/A'}</div>
           <p className="text-xs text-muted-foreground">
             Top 10% of users
           </p>
@@ -53,7 +53,7 @@ export function LatestInsights() {
           <Activity className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{latest.behavioralAnalysis.clarity}</div>
+          <div className="text-2xl font-bold">{typeof latest.behavioralAnalysis?.clarity === 'object' ? (latest.behavioralAnalysis.clarity as any).score : latest.behavioralAnalysis?.clarity || 'N/A'}</div>
           <p className="text-xs text-muted-foreground">
             Crystal clear audio
           </p>

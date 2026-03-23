@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
+    use_local_ai: bool = False
+
     # Local Model Configuration - defaults for container-to-container networking
     kokoro_base_url: str = "http://kokoro:8880/v1"
     whisper_base_url: str = "http://whisper:80/v1"
@@ -25,6 +27,7 @@ class Settings(BaseSettings):
     livekit_api_secret: str | None = None
 
     google_api_key: str | None = None
+    google_credentials_file: str | None = None
 
     # Qdrant Vector Store for RAG
     qdrant_url: str = "http://qdrant:6333"

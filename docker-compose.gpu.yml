@@ -1,8 +1,9 @@
 services:
   kokoro:
     build:
-      args:
-        KOKORO_IMAGE: ${KOKORO_IMAGE:-ghcr.io/remsky/kokoro-fastapi-gpu:latest}
+      context: ./inference/kokoro
+    ports:
+      - "8880:8880"
     deploy:
       resources:
         reservations:
@@ -13,6 +14,25 @@ services:
 
   llama_cpp:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "11434"
+      - --hf-repo
+      - "${LLAMA_HF_REPO:-unsloth/Qwen3-4B-Instruct-2507-GGUF}"
+      - --alias
+      - "${LLAMA_MODEL_ALIAS:-qwen3-4b}"
+      - --ctx-size
+      - "${LLAMA_CTX_SIZE:-16384}"
+    ports:
+      - "${LLAMA_HOST_PORT:-11436}:11434"
+    volumes:
+      - ./inference/llama/models:/models
+    environment:
+      - XDG_CACHE_HOME=/models
+      - HF_HOME=/models
+      - LLAMA_ARG_N_GPU_LAYERS=${LLAMA_N_GPU_LAYERS:-35}
     deploy:
       resources:
         reservations:
@@ -20,13 +40,18 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    environment:
-      - LLAMA_ARG_N_GPU_LAYERS=${LLAMA_N_GPU_LAYERS:-35}
       
   whisper:
     build:
-      args:
-        WHISPER_BASE: ${WHISPER_BASE:-nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04}
+      context: ./inference/whisper
+    ports:
+      - "11435:80"
+    volumes:
+      - whisper-data:/data
+    environment:
+      - VOXBOX_HF_REPO_ID=${VOXBOX_HF_REPO_ID:-Systran/faster-whisper-small}
+      - VOXBOX_DEVICE=${VOXBOX_DEVICE:-cuda:0}
+      - DATA_DIR=/data
     deploy:
       resources:
         reservations:
@@ -34,5 +59,6 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    environment:
-      - VOXBOX_DEVICE=${VOXBOX_DEVICE:-cuda:0}
+
+volumes:
+  whisper-data:

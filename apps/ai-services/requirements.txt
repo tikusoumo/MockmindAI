@@ -1,0 +1,36 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.8.0
+pydantic-settings>=2.4.0
+python-dotenv>=1.0.1
+livekit-agents
+livekit-plugins-silero
+livekit-plugins-turn-detector
+livekit-plugins-openai
+livekit-plugins-google>=0.6.0
+livekit-plugins-deepgram>=0.6.0
+livekit-plugins-groq>=0.6.0
+livekit-plugins-elevenlabs>=0.6.0
+livekit-plugins-noise-cancellation~=0.2
+
+# LangChain/LangGraph for RAG pipeline
+langchain>=0.3.0
+langchain-community>=0.3.0
+langgraph>=0.2.0
+
+# Qdrant vector store
+qdrant-client>=1.12.0
+langchain-qdrant>=0.2.0
+
+# Document processing
+pypdf>=5.0.0
+python-docx>=1.1.0
+python-multipart>=0.0.9
+
+# Embeddings (local via sentence-transformers)
+sentence-transformers>=3.0.0
+
+# CV Analysis (MediaPipe for face/pose detection)
+mediapipe>=0.10.0
+numpy>=1.26.0
+opencv-python-headless>=4.9.0

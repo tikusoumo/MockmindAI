@@ -18,7 +18,5 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
   && python -m pip install --no-cache-dir . \
   && python -m agent.voice_agent download-files
 
-EXPOSE 8000
-
 CMD ["python", "-m", "agent.voice_agent", "start"]
 

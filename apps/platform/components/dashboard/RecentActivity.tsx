@@ -17,8 +17,8 @@ export function RecentActivity() {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>Recent Activity</CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
+        <CardTitle className="text-sm font-semibold">Recent Activity</CardTitle>
         <Button variant="ghost" size="sm" asChild>
           <Link href="/history">
             View All <ArrowRight className="ml-2 h-4 w-4" />
@@ -26,20 +26,20 @@ export function RecentActivity() {
         </Button>
       </CardHeader>
       <CardContent>
-        <div className="space-y-4">
+        <div className="space-y-2">
           {pastInterviews.slice(0, 4).map((interview) => (
             <div
               key={interview.id}
-              className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+              className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
             >
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <h4 className="font-semibold">{interview.title}</h4>
-                  <Badge variant={interview.score >= 80 ? "default" : interview.score >= 70 ? "secondary" : "outline"}>
+                  <h4 className="font-semibold text-sm">{interview.title}</h4>
+                  <Badge variant={interview.score >= 80 ? "default" : interview.score >= 70 ? "secondary" : "outline"} className="text-[10px] h-4 px-1">
                     {interview.score}%
                   </Badge>
                 </div>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Calendar className="h-3 w-3" />
                     {interview.date}
@@ -51,7 +51,7 @@ export function RecentActivity() {
                   <span className="capitalize">{interview.type}</span>
                 </div>
               </div>
-              <Button variant="outline" size="sm" asChild>
+              <Button variant="outline" size="sm" className="h-7 text-xs" asChild>
                 <Link href={`/report`}>View Report</Link>
               </Button>
             </div>

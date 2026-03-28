@@ -17,8 +17,8 @@ function Card({
       data-variant={variant}
       className={cn(
         // Base structure
-        "flex flex-col gap-6 rounded-xl py-6 text-sm shadow-sm overflow-hidden",
-        "has-[>img:first-child]:pt-0 data-[size=sm]:gap-4 data-[size=sm]:py-4",
+        "flex flex-col gap-4 rounded-xl py-4 text-sm shadow-sm overflow-hidden",
+        "has-[>img:first-child]:pt-0 data-[size=sm]:gap-3 data-[size=sm]:py-3",
         "*:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl group/card",
         
         // Variants
@@ -31,7 +31,7 @@ function Card({
         ],
 
         // Hover Effect
-        "transition-all duration-300 hover:shadow-2xl hover:border-primary/30 hover:-translate-y-1",
+        "transition-all duration-300 hover:shadow-2xl hover:border-primary/30",
         
         className
       )}
@@ -45,7 +45,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card-header"
       className={cn(
-        "gap-1 px-6 group-data-[size=sm]/card:px-4 flex flex-col justify-center",
+        "gap-1 px-4 group-data-[size=sm]/card:px-3 flex flex-col justify-center",
         className
       )}
       {...props}
@@ -77,7 +77,7 @@ function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-content"
-      className={cn("px-6 group-data-[size=sm]/card:px-4", className)}
+      className={cn("px-4 group-data-[size=sm]/card:px-3", className)}
       {...props}
     />
   )
@@ -87,7 +87,7 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-footer"
-      className={cn("px-6 group-data-[size=sm]/card:px-4 pt-0 flex items-center", className)}
+      className={cn("px-4 group-data-[size=sm]/card:px-3 pt-0 flex items-center", className)}
       {...props}
     />
   )

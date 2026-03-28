@@ -11,7 +11,13 @@ from .routers.documents import router as documents_router
 from .routers.reports import router as reports_router
 from .settings import settings
 
-app = FastAPI(title="AI Voice Agent Backend")
+app = FastAPI(
+    title="AI Voice Agent Backend",
+    description="Real-time voice agent API with STT, TTS, and Computer Vision analysis.",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
 
 allow_origins = [
 
@@ -29,7 +35,7 @@ app.add_middleware(
 )
 
 
-@app.get("/hello")
+@app.get("/hello", tags=["general"])
 def hello() -> dict[str, str]:
 	return {"message": "hello"}
 

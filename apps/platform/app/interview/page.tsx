@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense, useRef } from "react";
 import { 
   Mic, 
   MicOff, 
@@ -15,6 +15,7 @@ import { useSearchParams } from "next/navigation";
 import { InterviewTemplate } from "@/data/mockData";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,8 @@ import Link from "next/link";
 import type { User } from "@/data/mockData";
 import { useBackendData } from "@/lib/backend";
 import { fallbackCurrentUser } from "@/lib/fallback-data";
+import { useMediaDevices } from "@/hooks/useMediaDevices";
+import { AudioVisualizer } from "@/components/interview/AudioVisualizer";
 
 export default function InterviewPage() {
   return (
@@ -39,24 +42,25 @@ function InterviewPageContent() {
   const searchParams = useSearchParams();
   const templateId = searchParams.get("template");
   const customTitle = searchParams.get("title");
+  const customType = searchParams.get("type");
 
-  const isCodingRound = templateId === "machine-coding";
+  const isCodingRound = templateId === "machine-coding" || customType === "Machine Coding";
 
   const dummyTemplate: InterviewTemplate = {
-    id: "dummy",
+    id: templateId || "dummy",
     title: customTitle || "Tech Round: React & System Design",
-    type: isCodingRound ? "Machine Coding" : "Technical",
-    mode: "strict",
+    type: (customType as any) || (isCodingRound ? "Machine Coding" : "Technical"),
+    mode: (searchParams.get("mode") as any) || "strict",
     duration: "45 mins",
-    difficulty: "Medium",
+    difficulty: (searchParams.get("difficulty") as any) || "Medium",
     questions: [],
-    description: "Dummy template description",
-    icon: "code",
-    color: "blue"
+    description: "Practice session",
+    icon: isCodingRound ? "Code" : "Sparkles",
+    color: isCodingRound ? "blue" : "blue"
   };
 
   return (
-    <div className="flex flex-col gap-6 h-full w-full">
+    <div className="flex flex-col gap-4 h-full w-full">
       <InterviewSession currentUser={currentUser} template={dummyTemplate} />
     </div>
   );
@@ -64,8 +68,30 @@ function InterviewPageContent() {
 
 function InterviewSession({ currentUser, template }: { currentUser: User; template?: InterviewTemplate }) {
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState(true);
-  const [isCameraEnabled, setIsCameraEnabled] = useState(true);
+  
+  const {
+      stream,
+      cameras,
+      microphones,
+      activeCameraId,
+      setActiveCameraId,
+      activeMicId,
+      setActiveMicId,
+      isCameraEnabled,
+      setIsCameraEnabled,
+      isMicEnabled,
+      setIsMicEnabled,
+  } = useMediaDevices();
+
+  const videoRefCoding = useRef<HTMLVideoElement>(null);
+  const videoRefStandard = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (stream) {
+      if (videoRefCoding.current) videoRefCoding.current.srcObject = stream;
+      if (videoRefStandard.current) videoRefStandard.current.srcObject = stream;
+    }
+  }, [stream, isCameraEnabled]);
   
   // Dummy AI state
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
@@ -105,11 +131,11 @@ function InterviewSession({ currentUser, template }: { currentUser: User; templa
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const toggleMic = useCallback(() => setIsMicrophoneEnabled(prev => !prev), []);
-  const toggleCam = useCallback(() => setIsCameraEnabled(prev => !prev), []);
+  const toggleMic = useCallback(() => setIsMicEnabled(prev => !prev), [setIsMicEnabled]);
+  const toggleCam = useCallback(() => setIsCameraEnabled(prev => !prev), [setIsCameraEnabled]);
 
   return (
-    <div className="flex flex-col gap-6 h-full w-full min-h-[600px]">
+    <div className="flex flex-col gap-4 h-full w-full min-h-[600px]">
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-3">
@@ -132,20 +158,20 @@ function InterviewSession({ currentUser, template }: { currentUser: User; templa
              )}
           </div>
         </div>
-        <Button variant="outline" size="sm">
+        <Button variant="outline" size="sm" className="h-8">
           <MessageSquare className="mr-2 h-4 w-4" /> Show Transcript
         </Button>
       </div>
 
       {isCodingRound ? (
-        <div className="grid gap-6 lg:grid-cols-2 min-h-[500px]">
+        <div className="grid gap-4 lg:grid-cols-2 min-h-[500px]">
            {/* Code Editor Area */}
            <div className="flex flex-col gap-2 h-full min-h-[400px]">
               <Card className="flex-1 overflow-hidden border-zinc-800 bg-zinc-950 p-0">
                   <CodeEditor 
                     value={code} 
                     onChange={(val) => setCode(val || "")} 
-                    language="javascript" 
+                    defaultLanguage="javascript" 
                   />
               </Card>
            </div>
@@ -211,23 +237,23 @@ function InterviewSession({ currentUser, template }: { currentUser: User; templa
                         <p className="text-sm font-semibold text-white">{currentUser?.name || "Alex Chen"}</p>
                     </div>
                 ) : (
-                    <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
-                         <div className="text-zinc-600 font-medium">Dummy Camera Feed</div>
+                    <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center overflow-hidden">
+                         <video ref={videoRefCoding} autoPlay playsInline muted className="w-full h-full object-cover transform -scale-x-100" />
                     </div>
                 )}
-                 <div className="absolute bottom-2 left-2">
+                 <div className="absolute bottom-2 left-2 z-10 flex items-center gap-2">
                     <div className={cn(
-                      "backdrop-blur-md px-2 py-0.5 rounded text-xs font-medium transition-colors z-10",
-                      isMicrophoneEnabled ? "bg-green-500/80 text-white" : "bg-black/50 text-white"
+                      "backdrop-blur-md px-2 py-0.5 rounded text-xs font-medium transition-colors",
+                      isMicEnabled ? "bg-green-500/80 text-white" : "bg-black/50 text-white"
                     )}>
-                      {isMicrophoneEnabled ? "Mic On" : "Mic Off"}
+                      {isMicEnabled ? "Mic On" : "Mic Off"}
                     </div>
                   </div>
               </Card>
            </div>
         </div>
       ) : (
-      <div className="grid gap-6 lg:grid-cols-2 min-h-[500px]">
+      <div className="grid gap-4 lg:grid-cols-2 min-h-[500px]">
         {/* AI Interviewer View */}
         <Card className={cn(
           "relative flex flex-col items-center justify-center overflow-hidden transition-all duration-500",
@@ -293,73 +319,89 @@ function InterviewSession({ currentUser, template }: { currentUser: User; templa
                     <p className="text-xs text-muted-foreground">Camera is off</p>
                 </div>
             ) : (
-                <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
-                     <div className="text-zinc-600 font-medium">Dummy Camera Feed</div>
+                <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center overflow-hidden">
+                     <video ref={videoRefStandard} autoPlay playsInline muted className="w-full h-full object-cover transform -scale-x-100" />
                 </div>
             )}
           
           <div className="absolute bottom-4 left-4 z-10">
             <div className={cn(
-              "backdrop-blur-md px-3 py-1 rounded-md text-sm font-medium transition-colors",
-              isMicrophoneEnabled ? "bg-green-500/80 text-white" : "bg-black/50 text-white"
+              "backdrop-blur-md px-3 py-1 rounded-md text-sm font-medium transition-colors mb-2 inline-block",
+              isMicEnabled ? "bg-green-500/80 text-white" : "bg-black/50 text-white"
             )}>
-              {isMicrophoneEnabled ? "You (Mic On)" : "You (Mic Off)"}
+              {isMicEnabled ? "You (Mic On)" : "You (Mic Off)"}
             </div>
             
-             {/* Local Audio Visualizer Dummy */}
-             {isMicrophoneEnabled && (
-                <div className="absolute bottom-16 left-1/2 -translate-x-1/2 h-16 w-32 flex items-end justify-center gap-1 z-20 pointer-events-none">
-                     {[1, 2, 3, 4, 5].map((i) => (
-                        <div key={i} className="w-1.5 bg-green-500 rounded-t-sm animate-pulse" style={{ height: `${Math.random() * 20 + 5}px`, animationDelay: `${i * 0.15}s` }} />
-                    ))}
-                </div>
-             )}
+             <AudioVisualizer stream={stream} isActive={isMicEnabled} />
           </div>
         </Card>
       </div>
       )}
 
       {/* Controls Bar */}
-      <Card className="p-4 z-10">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon">
-              <MoreVertical className="h-5 w-5" />
-            </Button>
+      <Card className="p-3 z-10 border-zinc-800 bg-zinc-950/50 backdrop-blur-md">
+        <div className="flex items-center justify-between relative pl-2 pr-4">
+          <div className="flex bg-zinc-900 rounded-2xl p-1 gap-1 border border-zinc-800 shadow-sm relative z-10">
+             {/* Mic Selector box */}
+             <div className="w-14 h-12 flex items-stretch rounded-xl border border-transparent hover:border-zinc-800 bg-zinc-950/50 transition-colors overflow-hidden">
+               <Button 
+                 variant={!isMicEnabled ? "destructive" : "ghost"} 
+                 className={cn("flex-1 h-full rounded-none p-0 transition-colors", isMicEnabled && "bg-transparent hover:bg-zinc-800")}
+                 onClick={toggleMic}
+               >
+                 {!isMicEnabled ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5 text-green-500" />}
+               </Button>
+               <div className="w-[1px] bg-zinc-800 my-2" />
+               <Select value={activeMicId} onValueChange={setActiveMicId}>
+                  <SelectTrigger className="w-5 !h-full rounded-none border-0 bg-transparent p-0 flex items-center justify-center [&>svg]:h-3.5 [&>svg]:w-3.5 [&>span]:hidden focus:ring-0 shadow-none hover:bg-zinc-800 transition-colors cursor-pointer z-10 !data-[size=default]:h-full !data-[size=sm]:h-full">
+                  </SelectTrigger>
+                  <SelectContent position="popper" align="start" sideOffset={8} className="w-[240px] bg-zinc-900 border-zinc-800 text-zinc-300">
+                     {microphones.map(m => (
+                       <SelectItem key={m.deviceId} value={m.deviceId} className="text-xs">{m.label || `Mic ${m.deviceId.slice(0,5)}`}</SelectItem>
+                     ))}
+                  </SelectContent>
+               </Select>
+             </div>
+
+             {/* Cam Selector box */}
+             <div className="w-14 h-12 flex items-stretch rounded-xl border border-transparent hover:border-zinc-800 bg-zinc-950/50 transition-colors overflow-hidden">
+               <Button 
+                 variant={!isCameraEnabled ? "destructive" : "ghost"} 
+                 className={cn("flex-1 h-full rounded-none p-0 transition-colors", isCameraEnabled && "bg-transparent hover:bg-zinc-800")}
+                 onClick={toggleCam}
+               >
+                 {!isCameraEnabled ? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5 text-blue-500" />}
+               </Button>
+               <div className="w-[1px] bg-zinc-800 my-2" />
+               <Select value={activeCameraId} onValueChange={setActiveCameraId}>
+                  <SelectTrigger className="w-5 !h-full rounded-none border-0 bg-transparent p-0 flex items-center justify-center [&>svg]:h-3.5 [&>svg]:w-3.5 [&>span]:hidden focus:ring-0 shadow-none hover:bg-zinc-800 transition-colors cursor-pointer z-10 !data-[size=default]:h-full !data-[size=sm]:h-full">
+                  </SelectTrigger>
+                  <SelectContent position="popper" align="start" sideOffset={8} className="w-[240px] bg-zinc-900 border-zinc-800 text-zinc-300">
+                     {cameras.map(c => (
+                       <SelectItem key={c.deviceId} value={c.deviceId} className="text-xs">{c.label || `Camera ${c.deviceId.slice(0,5)}`}</SelectItem>
+                     ))}
+                  </SelectContent>
+               </Select>
+             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <Button 
-              variant={!isMicrophoneEnabled ? "destructive" : "secondary"} 
-              size="icon" 
-              className="h-12 w-12 rounded-full"
-              onClick={toggleMic}
-            >
-              {!isMicrophoneEnabled ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-            </Button>
-            
-            <Button 
-              variant={!isCameraEnabled ? "destructive" : "secondary"} 
-              size="icon" 
-              className="h-12 w-12 rounded-full"
-              onClick={toggleCam}
-            >
-              {!isCameraEnabled ? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5" />}
-            </Button>
-
+          <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 flex items-center gap-4 z-20">
+             {/* Center exit button */}
             <Link href="/">
               <Button 
                 variant="destructive" 
                 size="icon" 
-                className="h-12 w-12 rounded-full"
+                className="h-12 w-12 rounded-full shadow-lg hover:bg-red-600 hover:scale-105 transition-all outline-4 outline-red-900/20 shrink-0"
               >
                 <PhoneOff className="h-5 w-5" />
               </Button>
             </Link>
           </div>
 
-          <div className="flex items-center gap-2">
-             <div className="w-10"></div>
+          <div className="flex items-center gap-2 relative z-10">
+            <Button variant="ghost" size="icon" className="hover:bg-zinc-800 text-zinc-400">
+              <MoreVertical className="h-5 w-5" />
+            </Button>
           </div>
         </div>
       </Card>

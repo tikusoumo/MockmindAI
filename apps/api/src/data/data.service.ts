@@ -158,7 +158,7 @@ const defaultReportLatest = {
       improvements: ['Discuss failure modes', 'Consider rate limiting'],
     },
   ],
-  transcripts: [
+  transcript: [
     { speaker: 'Interviewer', text: 'Thank you for joining us today.', timestamp: '0:00' },
     { speaker: 'You', text: 'Thank you for having me. I am excited to be here.', timestamp: '0:05' },
   ],
@@ -258,7 +258,15 @@ export class DataService {
         },
         orderBy: { date: 'desc' },
       });
-      return report || defaultReportLatest;
+      if (report) {
+        // Map Prisma DB naming back to Frontend expectations
+        const { transcripts, ...rest } = report as any;
+        return {
+          ...rest,
+          transcript: transcripts,
+        };
+      }
+      return defaultReportLatest;
     } catch {
       return defaultReportLatest;
     }
@@ -279,6 +287,50 @@ export class DataService {
       return interviews.length > 0 ? interviews : defaultPastInterviews;
     } catch {
       return defaultPastInterviews;
+    }
+  }
+
+  async createReport(data: any) {
+    try {
+      const { transcript, ...rest } = data;
+      
+      return await this.prisma.report.create({
+        data: {
+          id: rest.id,
+          date: rest.date,
+          overallScore: rest.overallScore,
+          duration: rest.duration,
+          hardSkillsScore: rest.hardSkillsScore,
+          softSkillsScore: rest.softSkillsScore,
+          radarData: rest.radarData,
+          timelineData: rest.timelineData,
+          fillerWordsAnalysis: rest.fillerWordsAnalysis,
+          pacingAnalysis: rest.pacingAnalysis,
+          behavioralAnalysis: rest.behavioralAnalysis,
+          swot: rest.swot,
+          resources: rest.resources,
+          questions: {
+            create: (rest.questions || []).map((q: any) => ({
+              question: q.question,
+              userAnswerSummary: q.userAnswerSummary,
+              aiFeedback: q.aiFeedback,
+              score: q.score,
+              improvements: q.improvements,
+              audioUrl: q.audioUrl || null
+            }))
+          },
+          transcripts: {
+            create: (transcript || []).map((t: any) => ({
+              speaker: t.speaker,
+              text: t.text,
+              timestamp: t.timestamp
+            }))
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Failed to create report in DB:', error);
+      throw error;
     }
   }
 }

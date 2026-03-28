@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models

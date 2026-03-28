@@ -70,9 +70,33 @@ python -m uvicorn agent.main:app --reload --host 0.0.0.0 --port 8000
 ### Start the LiveKit Agent Worker
 In a separate terminal:
 ```powershell
-cd apps/backend
+cd apps/ai-services
 .\.venv\Scripts\Activate.ps1
 python -m agent.voice_agent
+```
+
+## Terminal Scripts
+
+You can test the components locally using your terminal (without needing the web frontend). Ensure your virtual environment is activated:
+
+```powershell
+cd apps/ai-services
+.\.venv\Scripts\Activate.ps1
+
+# 1. Base Terminal Voice Agent (Voice only)
+python terminal_chat.py
+
+# 2. Terminal CV Agent (Voice + Webcam for eye contact/posture scoring)
+python terminal_cv.py --voice
+# Recommended: Run with visual debug to see eye tracking HUD
+python terminal_cv.py --voice --visual-debug
+# Disable webcam (run voice-only mode with the CV text simulation)
+python terminal_cv.py --no-cam
+# Text-only mode (type answers, analyzes via webcam)
+python terminal_cv.py
+
+# 3. Terminal RAG Agent (Agent answers questions using documents)
+python terminal_rag.py
 ```
 
 Open:

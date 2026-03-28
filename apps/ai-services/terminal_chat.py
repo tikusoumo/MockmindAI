@@ -6,13 +6,21 @@ import sounddevice as sd
 import requests
 import io
 import wave
+import re
 from dotenv import load_dotenv
 from agent.settings import settings
 from agent.voice_agent import create_model_components
+from agent.analysis.turn_analyzer import TurnAnalyzer
 from livekit.agents.llm import ChatContext, ChatMessage
+from livekit.rtc import AudioFrame
 
 # Force USE_LOCAL_AI since this is specifically a local models test
 settings.use_local_ai = True
+
+# CLI flags
+GUIDE_MODE = "--guide" in sys.argv
+if GUIDE_MODE:
+    settings.guide_mode = True
 
 # Load environment variables (pulls in the new BASE_URL overrides)
 load_dotenv()
@@ -37,10 +45,15 @@ async def record_audio(duration=5, sample_rate=16000):
 
 # --- Conversational Voice Loop ---
 async def main():
-    print("=" * 50)
-    print("🤖 TERMINAL INTERFACE: Continuous Local AI Assistant")
-    print("=" * 50)
-    print("\n[System] Initializing VAD and Model connections...")
+    print("=" * 55)
+    print("\U0001f916 TERMINAL INTERFACE: AI Interview Coach")
+    if GUIDE_MODE:
+        print("\U0001f9ed GUIDE MODE: Agent will coach you in real-time")
+    print("=" * 55)
+    print("\n[System] Initializing VAD, Models, and Analysis...")
+    
+    # Initialize turn analyzer
+    turn_analyzer = TurnAnalyzer()
     
     try:
         from livekit.plugins import silero
@@ -51,12 +64,90 @@ async def main():
         
         stt, llm, _ = create_model_components(settings)
         chat_ctx = ChatContext()
-        chat_ctx.add_message(role="system", content="You are a helpful local AI assistant.")
-        print("✅ Continuous mode ready! Just speak to the agent.")
-        print("[System] Commands: Speak naturally, or press Ctrl+C to quit.")
+        
+        system_prompt = """You are a professional AI interview coach. Help candidates practice interviews.
+Keep responses concise and natural for voice conversation.
+Do not use emojis, asterisks, or complex formatting."""
+        if GUIDE_MODE:
+            system_prompt += """\nYou are in GUIDE MODE. You will receive candidate analysis data.
+Adapt your tone and responses based on their emotional state.
+If they seem nervous, be encouraging. If they use many fillers, gently suggest pausing."""
+        
+        chat_ctx.add_message(role="system", content=system_prompt)
+        print("\u2705 Ready! Speak naturally. Press Ctrl+C for session summary.")
     except Exception as e:
         print(f"❌ Initialization Failed: {e}")
         return
+    
+    # Multi-sentence playback queue
+    playback_queue = asyncio.Queue()
+    current_playback_task = None
+    
+    async def playback_worker():
+        nonlocal playing, current_playback_task
+        while True:
+            try:
+                item = await playback_queue.get()
+                if not item: 
+                    playback_queue.task_done()
+                    continue
+                audio_array, sample_rate = item
+                
+                async def _play():
+                    nonlocal playing
+                    playing = True
+                    sd.play(audio_array, sample_rate)
+                    duration = len(audio_array) / sample_rate
+                    await asyncio.sleep(duration)
+                    playing = False
+
+                current_playback_task = asyncio.create_task(_play())
+                try:
+                    await current_playback_task
+                except asyncio.CancelledError:
+                    sd.stop()
+                    playing = False
+                finally:
+                    current_playback_task = None
+                    playback_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"❌ Playback Worker Error: {e}")
+                playing = False
+
+    # Start worker
+    worker_task = asyncio.create_task(playback_worker())
+
+    async def synthesize_and_enqueue(text):
+        """Synthesize a single sentence and add to queue."""
+        if not text.strip(): return
+        clean_text = re.sub(r'[^\x00-\x7F]+', '', text)
+        clean_text = clean_text.replace("*", "").replace("#", "").strip()
+        if not clean_text: return
+
+        url = f"{settings.kokoro_base_url}/audio/speech"
+        payload = {
+            "model": "kokoro",
+            "input": clean_text,
+            "voice": "af_sky",
+            "response_format": "wav"
+        }
+        try:
+            print(f"\n[Debug] TTS Request: '{clean_text[:40]}...'", flush=True)
+            res = requests.post(url, json=payload, timeout=12)
+            if res.status_code == 200:
+                with io.BytesIO(res.content) as wav_io:
+                    with wave.open(wav_io, 'rb') as wav_file:
+                        sr = wav_file.getframerate()
+                        audio_bytes = wav_file.readframes(wav_file.getnframes())
+                        arr = np.frombuffer(audio_bytes, dtype=np.int16)
+                        await playback_queue.put((arr, sr))
+                        print(f" [Debug] Enqueued: {len(arr)} samples", flush=True)
+            else:
+                print(f"❌ TTS Error: {res.status_code}")
+        except Exception as e:
+            print(f"❌ TTS Failed: {e}")
 
     # Tracking states
     is_speaking = False
@@ -72,7 +163,7 @@ async def main():
     playing = False
 
     def audio_callback(indata, frames, time, status):
-        nonlocal is_speaking, speech_frames, silence_counter, playing, interrupt_counter
+        nonlocal is_speaking, speech_frames, silence_counter, playing, interrupt_counter, current_playback_task
         if status:
             print(status, file=sys.stderr)
         
@@ -91,10 +182,17 @@ async def main():
             # Speech likelihood
             if prob > 0.4: 
                 # Hysteresis for interruption: must be sustained
-                if playing:
+                if playing or not playback_queue.empty():
                     interrupt_counter += 1
                     if interrupt_counter > 2: # ~64ms sustained
+                        if current_playback_task:
+                            current_playback_task.cancel()
+                        
                         sd.stop() # Interrupt!
+                        # Clear queue
+                        while not playback_queue.empty():
+                            try: playback_queue.get_nowait()
+                            except: break
                         playing = False
                         print("\n[System] Interrupted!")
                         interrupt_counter = 0
@@ -110,7 +208,7 @@ async def main():
                 if is_speaking:
                     speech_frames.append(chunk)
                     silence_counter += 1
-        except Exception as ve:
+        except Exception:
             # Avoid printing every frame error to not flood console
             pass
 
@@ -127,10 +225,9 @@ async def main():
                     speech_frames = []
                     silence_counter = 0
                     
-                    print("[System] Processing turn...   ")
+                    print("[System] Processing turn...")
                     
                     # 1. Transcribe
-                    from livekit.rtc import AudioFrame
                     int_data = recorded_audio.astype(np.int16)
                     frame = AudioFrame(
                         data=int_data.tobytes(),
@@ -139,46 +236,44 @@ async def main():
                         samples_per_channel=len(int_data)
                     )
                     
-                    print(f"[Debug] Turn finished. Frames captured: {len(recorded_audio)}")
-                    print(f"[Debug] Sending to STT: {settings.whisper_base_url}")
-                    
                     try:
                         stt_res = await stt.recognize(buffer=frame)
-                        print(f"[Debug] STT Response Received. Type: {stt_res.type}", flush=True)
-                        
-                        user_text = ""
-                        if stt_res.alternatives:
-                            user_text = stt_res.alternatives[0].text
-                            print(f"[Debug] Extracted text: '{user_text}'", flush=True)
-
-                        if not user_text.strip():
-                            print("[Debug] STT returned empty text.", flush=True)
-                            continue
+                        user_text = stt_res.alternatives[0].text if stt_res.alternatives else ""
+                        if not user_text.strip(): continue
                             
                     except Exception as stt_err:
-                        print(f"\n❌ STT Error: {stt_err}", flush=True)
+                        print(f"\n\u274c STT Error: {stt_err}", flush=True)
                         continue
 
-                    print(f"\n👤 You: {user_text}", flush=True)
+                    print(f"\n\U0001f464 You: {user_text}", flush=True)
+                    
+                    # 1.5 Speech Analysis (hybrid: audio + text)
+                    turn_metrics = turn_analyzer.analyze_turn(
+                        audio=recorded_audio,
+                        transcript=user_text,
+                        sample_rate=16000,
+                    )
+                    display = turn_analyzer.format_terminal_display(turn_metrics)
+                    print(f"\U0001f4ca {display}", flush=True)
                         
                     # 2. LLM Respond
                     full_response = "" 
+                    sentence_buffer = ""
                     try:
                         chat_ctx.add_message(role="user", content=user_text)
-                        print(f"[Debug] Message added to context. Total messages: {len(chat_ctx.messages())}", flush=True)
                         
-                        print("🤖 Agent: ", end="", flush=True)
+                        # Guide Mode: inject candidate analysis into LLM context
+                        if GUIDE_MODE:
+                            guide_prompt = turn_analyzer.get_guide_prompt(turn_metrics)
+                            chat_ctx.add_message(role="system", content=guide_prompt)
                         
-                        print(f"[Debug] Contacting LLM: {settings.llama_base_url} (model: {settings.llama_model})", flush=True)
+                        print("\U0001f916 Agent: ", end="", flush=True)
                         
-                        # Use a timeout or simple check
                         stream = llm.chat(chat_ctx=chat_ctx)
                         if asyncio.iscoroutine(stream) or hasattr(stream, '__await__'):
                             stream = await stream
 
-                        print("[Debug] Stream opened, waiting for first chunk...", flush=True)
                         async for chunk in stream:
-                            print(".", end="", flush=True) # Progress dot
                             content = ""
                             if hasattr(chunk, 'choices') and chunk.choices:
                                 delta = chunk.choices[0].delta
@@ -191,61 +286,39 @@ async def main():
                             if content:
                                 print(content, end="", flush=True)
                                 full_response += content
+                                sentence_buffer += content
+                                
+                                # Split by punctuation for streaming TTS
+                                if any(p in sentence_buffer for p in ".!?\n"):
+                                    # Split and take the first part
+                                    import re
+                                    parts = re.split(r'([.!?\n])', sentence_buffer)
+                                    if len(parts) > 2:
+                                        to_speak = "".join(parts[:2])
+                                        sentence_buffer = "".join(parts[2:])
+                                        asyncio.create_task(synthesize_and_enqueue(to_speak))
                         
-                        print("\n[Debug] Stream finished.", flush=True)
+                        # Final bit
+                        if sentence_buffer.strip():
+                            asyncio.create_task(synthesize_and_enqueue(sentence_buffer))
+                        
+                        chat_ctx.add_message(role="assistant", content=full_response)
+                        print("\n[Debug] turn finished.", flush=True)
                     except Exception as turn_err:
-                        print(f"\n❌ Turn Error: {turn_err}", flush=True)
+                        print(f"\n\u274c Turn Error: {turn_err}")
                         import traceback
                         traceback.print_exc()
                     
-                    print() # Newline after response
-
-                    # 3. TTS Synthesis & Playback
-                    if full_response.strip():
-                        import re
-                        clean_text = re.sub(r'[^\x00-\x7F]+', '', full_response)
-                        clean_text = clean_text.replace("*", "").replace("#", "").strip()
-                        
-                        if clean_text:
-                            url = f"{settings.kokoro_base_url}/audio/speech"
-                            payload = {
-                                "model": "kokoro",
-                                "input": clean_text,
-                                "voice": "af_sky",
-                                "response_format": "wav"
-                            }
-                            
-                            print(f"[Debug] TTS Request to: {url}")
-                            try:
-                                resp = requests.post(url, json=payload, timeout=30)
-                                print(f"[Debug] TTS HTTP Status: {resp.status_code}")
-                                if resp.status_code == 200:
-                                    with wave.open(io.BytesIO(resp.content), 'rb') as wav:
-                                        params = wav.getparams()
-                                        frames = wav.readframes(params.nframes)
-                                        audio_arr = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32767.0
-                                        print(f"[Debug] Audio array size: {len(audio_arr)}")
-                                        print("[System] Speaking...")
-                                        playing = True
-                                        sd.play(audio_arr, samplerate=params.framerate)
-                                else:
-                                    print(f"[System] TTS Error: {resp.status_code} - {resp.text}")
-                            except Exception as te:
-                                print(f"[System] TTS Exception: {te}")
-                    
-                    # Save context
-                    chat_ctx.add_message(role="assistant", content=full_response)
+                    print(flush=True) # Newline after response
                     print("\n[System] Ready for input...")
 
-                await asyncio.sleep(0.1) # Main loop idle
-                
-                # Check for playback completion (crude but works for sd.play)
-                # sd.get_stream() isn't standard; we'll assume it finished if 
-                # we don't have a better way, or just let VAD interrupt it.
-                # In most cases sd.play is enough for this simple script.
-
+                await asyncio.sleep(0.01)
         except KeyboardInterrupt:
-            print("\n[System] Exiting conversational loop...")
+            # Print session summary on exit
+            summary = turn_analyzer.get_session_summary()
+            print(turn_analyzer.format_session_display(summary))
+            worker_task.cancel()
+            print("\n[System] Session ended.")
 
 if __name__ == "__main__":
     print("\n[Debug] Available Audio Devices:")

@@ -14,6 +14,10 @@ class Settings(BaseSettings):
 
     use_local_ai: bool = False
 
+    # Speech Analysis
+    analysis_enabled: bool = True
+    guide_mode: bool = False  # When True, agent adapts to candidate's emotional state
+
     # Local Model Configuration - defaults for container-to-container networking
     kokoro_base_url: str = "http://kokoro:8880/v1"
     whisper_base_url: str = "http://whisper:80/v1"

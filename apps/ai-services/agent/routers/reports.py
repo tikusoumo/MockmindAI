@@ -99,6 +99,28 @@ async def generate_report(request: GenerateReportRequest) -> dict[str, Any]:
     return report.to_dict()
 
 
+@router.get("/latest")
+async def get_latest_report() -> dict[str, Any]:
+    """Get the most recently generated report or generate a mock from the latest session.
+    
+    This is called by the Next.js frontend to display the final interview summary.
+    """
+    logger.info("Fetching latest report")
+    if not _session_cache:
+        # Fallback to mock report if no live sessions exist yet
+        request = GenerateReportRequest(session_id="latest_mock")
+        # Reuse the mock generation block from generate_report
+        return await generate_report(request)
+        
+    # Get the most recently stored session
+    latest_session_id = list(_session_cache.keys())[-1]
+    latest_session = _session_cache[latest_session_id]
+    
+    generator = ReportGenerator()
+    report = generator.generate(latest_session)
+    return report.to_dict()
+
+
 @router.get("/{report_id}")
 async def get_report(report_id: str) -> dict[str, Any]:
     """Get a previously generated report."""

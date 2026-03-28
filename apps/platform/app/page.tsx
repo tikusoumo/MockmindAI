@@ -117,7 +117,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Welcome Section */}
       <div className="flex items-center justify-between">
         <div>
@@ -142,7 +142,7 @@ export default function Dashboard() {
       <LatestInsights />
 
       {/* Quick Actions */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         {interviewTemplates.map((template) => (
           <Card key={template.id} className="group relative overflow-hidden transition-all hover:shadow-md hover:border-primary/50 cursor-pointer">
             <CardHeader className="p-4 pb-2">
@@ -165,25 +165,27 @@ export default function Dashboard() {
           </Card>
         ))}
         
-        <Link href="/interview/setup" className="block h-full">
-          <Card className="group relative overflow-hidden border-dashed transition-all hover:shadow-md hover:border-primary cursor-pointer h-full flex items-center justify-center">
-            <div className="flex flex-col items-center justify-center  w-full h-full text-center p-6">
-              <div className="w-12 h-12 mt-4 mb-2 rounded-full bg-accent flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                <Plus className="h-6 w-6" />
+        <NewSessionModal templates={interviewTemplates} defaultTab="custom">
+          <div className="block h-full">
+            <Card className="group relative overflow-hidden border-dashed transition-all hover:shadow-md hover:border-primary cursor-pointer h-full flex items-center justify-center bg-transparent hover:bg-transparent">
+              <div className="flex flex-col items-center justify-center w-full h-full text-center p-6">
+                <div className="w-12 h-12 mt-4 mb-2 rounded-full bg-accent flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                  <Plus className="h-6 w-6" />
+                </div>
+                <h3 className="font-semibold">Custom Session</h3>
+                <p className="text-sm text-muted-foreground">Configure your own topic</p>
               </div>
-              <h3 className="font-semibold">Custom Session</h3>
-              <p className="text-sm text-muted-foreground">Configure your own topic</p>
-            </div>
-          </Card>
-        </Link>
+            </Card>
+          </div>
+        </NewSessionModal>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-7">
         {/* Progress Tracker */}
-        <div className="col-span-4 space-y-4">
+        <div className="col-span-4 space-y-3">
           <ProgressChart />
           
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-3">
             {progressStats.map((stat) => (
               <Card key={stat.label}>
                 <CardHeader className="pb-2">

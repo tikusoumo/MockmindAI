@@ -38,10 +38,10 @@ const chartConfig = {
 export function ProgressChart() {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Performance Trend</CardTitle>
-        <CardDescription>
-          Showing total score for the last 6 months
+      <CardHeader className="pb-0 pt-4 px-4">
+        <CardTitle className="text-sm font-semibold">Performance Trend</CardTitle>
+        <CardDescription className="text-xs">
+          Last 6 months
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -76,14 +76,11 @@ export function ProgressChart() {
           </AreaChart>
         </ChartContainer>
       </CardContent>
-      <CardFooter>
-        <div className="flex w-full items-start gap-2 text-sm">
-          <div className="grid gap-2">
+      <CardFooter className="py-2 px-4">
+        <div className="flex w-full items-start gap-2 text-xs">
+          <div className="grid gap-1">
             <div className="flex items-center gap-2 font-medium leading-none">
-              Trending up by 5.2% this month <TrendingUp className="h-4 w-4" />
-            </div>
-            <div className="flex items-center gap-2 leading-none text-muted-foreground">
-              January - June 2024
+              Trending up by 5.2% <TrendingUp className="h-3 w-3 text-green-500" />
             </div>
           </div>
         </div>

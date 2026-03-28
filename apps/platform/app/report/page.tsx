@@ -319,7 +319,7 @@ export default function ReportPage() {
               <CardDescription>Review the entire conversation history</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {report.transcript.map((entry, i) => (
+              {(report.transcript || (report as any).transcripts || []).map((entry: any, i: number) => (
                 <div key={i} className={cn("flex gap-4", entry.speaker === 'You' ? "flex-row-reverse" : "")}>
                   <div className={cn(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",

@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..livekit_client import get_livekit_config
 
-router = APIRouter()
+router = APIRouter(tags=["health"])
 
 
 @router.get("/healthz")

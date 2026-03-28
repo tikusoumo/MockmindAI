@@ -63,4 +63,9 @@ export class DataController {
   async getPastInterviews() {
     return this.dataService.getPastInterviews();
   }
+
+  @Post('report')
+  async createReport(@Body() body: any) {
+    return this.dataService.createReport(body);
+  }
 }

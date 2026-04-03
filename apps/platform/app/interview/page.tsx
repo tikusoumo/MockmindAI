@@ -30,6 +30,7 @@ import { CodeEditor } from "@/components/interview/CodeEditor";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,7 @@ import {
   LiveKitRoom, 
   RoomAudioRenderer,
   useLocalParticipant,
+  useRemoteParticipants,
   VideoTrack,
   useTracks,
 } from "@livekit/components-react";
@@ -257,13 +259,9 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData }:
   }, [isDummyMode, toggleScreenShare]);
 
   // --- Arrays for Layout ---
-  const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
-  useEffect(() => {
-    const aiInterval = setInterval(() => {
-      setIsAgentSpeaking(prev => !prev);
-    }, 4000);
-    return () => clearInterval(aiInterval);
-  }, []);
+  const rawRemoteParticipants = useRemoteParticipants();
+  const remoteParticipants = !isDummyMode ? rawRemoteParticipants : [];
+  const isAgentSpeaking = remoteParticipants.some(p => p.identity.startsWith('agent-') && p.isSpeaking);
 
   const fallbackInterviewers = [
       { id: "ai-1", name: "Sarah (Lead)", role: "AI Agent", avatar: "https://i.pravatar.cc/150?u=sarah", speaking: isAgentSpeaking, isAI: true },
@@ -474,19 +472,58 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData }:
             <Badge variant="outline" className="shrink-0 bg-green-500/10 text-green-500 border-green-500/20">Live</Badge>
             <span className="shrink-0 tabular-nums text-sm text-muted-foreground">{formatTime(elapsedTime)}</span>
 
-            {/* Share Link Button */}
-            <Button 
-                variant="outline" 
-                size="sm" 
-                className="h-6 ml-2 gap-1 text-xs"
-                onClick={() => {
-                  navigator.clipboard.writeText(window.location.href);
-                  alert("Meeting link copied to clipboard!");
-                }}
-            >
-                <Users className="h-3 w-3" />
-                Invite
-            </Button>
+            {/* Configurable Invite / Share Meeting Button */}
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="h-6 ml-2 gap-1 text-xs">
+                    <Users className="h-3 w-3" />
+                    Invite Users
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Share Meeting Session</DialogTitle>
+                  <DialogDescription>
+                    Invite others to join this interview or change link access settings.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="flex flex-col gap-2">
+                    <h4 className="text-sm font-semibold">General Access</h4>
+                    <Select defaultValue="restricted">
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Access Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="restricted">Restricted (Only invited can join)</SelectItem>
+                        <SelectItem value="anyone">Anyone with link</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div className="flex flex-col gap-2 mt-2">
+                    <h4 className="text-sm font-semibold">Invite via Email</h4>
+                    <div className="flex w-full items-center space-x-2">
+                      <Input type="email" placeholder="user@example.com" />
+                      <Button variant="secondary" onClick={() => {
+                        alert("Mock Email sent to participant!");
+                      }}>Send Invite</Button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 p-4 border rounded bg-secondary/30">
+                    <p className="text-xs text-muted-foreground mb-2">Meeting Link</p>
+                    <div className="flex items-center space-x-2">
+                      <Input readOnly value={typeof window !== 'undefined' ? window.location.href : ''} className="text-xs" />
+                      <Button size="sm" onClick={() => {
+                        navigator.clipboard.writeText(typeof window !== 'undefined' ? window.location.href : '');
+                        alert("Meeting link copied to clipboard!");
+                      }}>Copy</Button>
+                    </div>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
 
             <div className="flex -space-x-2 ml-4">
                 {allParticipants.slice(0, 3).map((p) => (

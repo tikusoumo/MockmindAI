@@ -7,63 +7,146 @@ datasource db {
 }
 
 model User {
-  id            Int     @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   name          String
-  email         String? @unique
+  email         String?  @unique
   password_hash String?
-  role          String
-  avatar        String
-  level         String
+  googleId      String?  @unique
+  role          String   @default("user")
+  avatar        String   @default("")
+  level         String   @default("beginner")
+  isVerified    Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // ---------- Relationships ----------
+  sessions      InterviewSession[] 
+  posts         CommunityPost[]
+  comments      CommunityComment[]
+  progress      ProgressStat[]
+  scheduled     ScheduledSession[]
+  studyPlans    StudyPlan[]
 
   @@map("users")
 }
 
+model OTP {
+  id        Int      @id @default(autoincrement())
+  email     String
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("otps")
+}
+
+// -------------------------------------------------------------
+// Interview Templates & Execution
+// -------------------------------------------------------------
+
 model InterviewTemplate {
-  id          String @id
+  id          String @id @default(uuid())
   title       String
   description String
   duration    String
   difficulty  String
   icon        String
   color       String
+  type        String @default("Custom")
+
+  sessions    InterviewSession[]
 
   @@map("interview_templates")
 }
 
-model ProgressStat {
-  id      Int    @id @default(autoincrement())
-  label   String
-  value   Int
-  change  Int
-  history Json   @default("[]")
+model InterviewSession {
+  id          String   @id @default(uuid())
+  
+  // Link back to creator/owner
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Optional template reference
+  templateId  String?
+  template    InterviewTemplate? @relation(fields: [templateId], references: [id])
+  
+  // ----- Core Details -----
+  title       String   @default("Custom Interview Session")
+  jobRole     String?  // e.g., "Senior Frontend Developer"
+  focusAreas  String?  @db.Text // e.g., "System Design, React, Performance"
+  
+  // ----- Materials -----
+  materials   Json     @default("[]") // Array of { name: 'resume.pdf', url: '...', size: 1024 }
+  resumeText  String?  @db.Text       // Extracted text from uploaded materials
+  companyInfo String?  @db.Text       // Job Description or Company Details
+  
+  // ----- Configuration -----
+  type        String   @default("Technical") // E.g., Behavioral, Technical
+  difficulty  String   @default("medium")
+  aiBehavior  String   @default("learning")  // E.g., "learning" (Hints & Guidance), "strict", "mock"
+  persona     String   @default("Sarah")     // E.g., "Sarah (Friendly)", "John (Strict)"
+  systemPrompt String?  @db.Text // AI configuration overrides
+  
+  // ----- Execution State -----
+  status      String   @default("pending") // pending, in-progress, completed
+  startedAt   DateTime?
+  completedAt DateTime?
+  duration    Int?     // in seconds
 
-  @@map("progress_stats")
+  report      Report?
+  participants SessionParticipant[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("interview_sessions")
 }
 
-model ScheduledSession {
-  id          String @id
-  title       String
-  date        String
-  time        String
-  interviewer String
-
-  @@map("scheduled_sessions")
+model SessionParticipant {
+  id        String   @id @default(uuid())
+  
+  sessionId String
+  session   InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  // Can link to an existing user if registered, otherwise just email
+  userId    Int?
+  
+  email     String
+  name      String?
+  role      String   @default("Candidate") // "Candidate", "Interviewer", "Observer"
+  status    String   @default("invited")   // "invited", "joined", "declined"
+  
+  createdAt DateTime @default(now())
+  
+  @@map("session_participants")
 }
+
+// -------------------------------------------------------------
+// Reporting & Feedback (1:1 with InterviewSession)
+// -------------------------------------------------------------
 
 model Report {
-  id                  String             @id
-  date                String
+  id                  String   @id @default(uuid())
+  
+  // Direct link to the InterviewSession
+  sessionId           String   @unique
+  session             InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  date                DateTime @default(now())
   overallScore        Int
   duration            String
   hardSkillsScore     Int
   softSkillsScore     Int
-  radarData           Json               @default("[]")
-  timelineData        Json               @default("[]")
-  fillerWordsAnalysis Json               @default("[]")
-  pacingAnalysis      Json               @default("[]")
-  behavioralAnalysis  Json               @default("{}")
-  swot                Json               @default("{}")
-  resources           Json               @default("[]")
+  
+  // Stored as JSON arrays/objects
+  radarData           Json     @default("[]")
+  timelineData        Json     @default("[]")
+  fillerWordsAnalysis Json     @default("[]")
+  pacingAnalysis      Json     @default("[]")
+  behavioralAnalysis  Json     @default("{}")
+  swot                Json     @default("{}")
+  resources           Json     @default("[]")
+  
   questions           QuestionFeedback[]
   transcripts         TranscriptEntry[]
 
@@ -72,48 +155,104 @@ model Report {
 
 model QuestionFeedback {
   id                Int     @id @default(autoincrement())
-  report_id         String
-  question          String
-  userAnswerSummary String
-  aiFeedback        String
+  
+  reportId          String  @map("report_id")
+  report            Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  question          String  @db.Text
+  userAnswerSummary String  @db.Text
+  aiFeedback        String  @db.Text
   score             Int
   improvements      Json    @default("[]")
   audioUrl          String?
-  report            Report  @relation(fields: [report_id], references: [id])
 
   @@map("question_feedback")
 }
 
 model TranscriptEntry {
   id        Int    @id @default(autoincrement())
-  report_id String
-  speaker   String
-  text      String
+  
+  reportId  String @map("report_id")
+  report    Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  speaker   String // "user" or "ai"
+  text      String @db.Text
   timestamp String
-  report    Report @relation(fields: [report_id], references: [id])
 
   @@map("transcript_entries")
 }
 
+// -------------------------------------------------------------
+// Other Entities -> Tied back to User
+// -------------------------------------------------------------
+
+model ScheduledSession {
+  id          String   @id @default(uuid())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  date        DateTime
+  time        String
+  interviewer String
+
+  @@map("scheduled_sessions")
+}
+
+model ProgressStat {
+  id      Int    @id @default(autoincrement())
+  userId  Int
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  label   String
+  value   Int
+  change  Int
+  history Json   @default("[]")
+
+  @@map("progress_stats")
+}
+
+model StudyPlan {
+  id          String   @id @default(uuid())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title       String
+  description String?
+  status      String   @default("active") // active, completed
+  createdAt   DateTime @default(now())
+
+  @@map("study_plans")
+}
+
 model CommunityPost {
-  id        String @id
-  author    Json   @default("{}")
-  content   String
-  likes     Int
-  comments  Int
-  timestamp String
-  tags      Json   @default("[]")
+  id        String   @id @default(uuid())
+  
+  authorId  Int      @map("author_id")
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  content   String   @db.Text
+  likes     Int      @default(0)
+  timestamp DateTime @default(now())
+  tags      Json     @default("[]")
+
+  comments  CommunityComment[]
 
   @@map("community_posts")
 }
 
-model PastInterview {
-  id       String @id
-  title    String
-  date     String
-  duration String
-  score    Int
-  type     String
+model CommunityComment {
+  id        Int      @id @default(autoincrement())
+  
+  postId    String
+  post      CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  
+  authorId  Int
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
-  @@map("past_interviews")
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@map("community_comments")
 }
+

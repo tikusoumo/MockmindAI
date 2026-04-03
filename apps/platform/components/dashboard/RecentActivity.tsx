@@ -28,13 +28,14 @@ export function RecentActivity() {
       <CardContent>
         <div className="space-y-2">
           {pastInterviews.slice(0, 4).map((interview) => (
-            <div
+            <Link
               key={interview.id}
-              className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+              href={`/report/${interview.id}`}
+              className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 hover:border-primary/30 transition-all group"
             >
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <h4 className="font-semibold text-sm">{interview.title}</h4>
+                  <h4 className="font-semibold text-sm group-hover:text-primary transition-colors">{interview.title}</h4>
                   <Badge variant={interview.score >= 80 ? "default" : interview.score >= 70 ? "secondary" : "outline"} className="text-[10px] h-4 px-1">
                     {interview.score}%
                   </Badge>
@@ -51,10 +52,8 @@ export function RecentActivity() {
                   <span className="capitalize">{interview.type}</span>
                 </div>
               </div>
-              <Button variant="outline" size="sm" className="h-7 text-xs" asChild>
-                <Link href={`/report`}>View Report</Link>
-              </Button>
-            </div>
+              <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all shrink-0" />
+            </Link>
           ))}
         </div>
       </CardContent>

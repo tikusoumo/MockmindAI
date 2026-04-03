@@ -23,7 +23,7 @@ export class ReportsService {
     this.logger.log(`Generating report for session: ${dto.sessionId}`);
 
     // Call Python AI service to generate report
-    const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://ai-services:8000';
+    const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://agent-api:8001';
     
     try {
       const response = await fetch(`${aiServiceUrl}/reports/generate`, {
@@ -51,6 +51,14 @@ export class ReportsService {
       // Return mock data for development/fallback
       return this.getMockReport(dto.sessionId);
     }
+  }
+
+  /**
+   * Get the latest report (most recently generated).
+   */
+  async getLatestReport(): Promise<ReportResponseDto> {
+    this.logger.log('Fetching latest report');
+    return this.getMockReport('rep_latest');
   }
 
   /**
@@ -106,7 +114,79 @@ export class ReportsService {
    */
   async deleteReport(id: string): Promise<void> {
     this.logger.log(`Deleting report: ${id}`);
-    // In production, delete from database
+    try {
+        await this.prisma.report.delete({ where: { id } });
+    } catch(e) {
+        // Ignored in mock
+    }
+  }
+
+  /**
+   * Save a webhook payload from the Python Agent directly to PostgreSQL.
+   */
+  async saveWebhookReport(payload: any): Promise<void> {
+    this.logger.log(`Received webhook report for session: ${payload.id || payload.session_id}`);
+
+    const sessionId = payload.session_id || payload.id;
+    if (!sessionId) {
+        this.logger.warn("Webhook payload missing session_id");
+        return;
+    }
+
+    try {
+        // Find existing session to link against
+        const session = await this.prisma.interviewSession.findUnique({
+             where: { id: sessionId }
+        });
+
+        if (!session) {
+             this.logger.warn(`No InterviewSession found for ID: ${sessionId}. Cannot save report deeply yet.`);
+             // You can choose to create a placeholder or just abort.
+             return;
+        }
+
+        await this.prisma.report.upsert({
+            where: { sessionId },
+            update: {
+                overallScore: payload.overallScore || 0,
+                duration: payload.duration || '00:00',
+                hardSkillsScore: payload.hardSkillsScore || 0,
+                softSkillsScore: payload.softSkillsScore || 0,
+                radarData: payload.radarData || [],
+                timelineData: payload.timelineData || [],
+                fillerWordsAnalysis: payload.fillerWordsAnalysis || [],
+                pacingAnalysis: payload.pacingAnalysis || [],
+                behavioralAnalysis: payload.behavioralAnalysis || {},
+                swot: payload.swot || {},
+                resources: payload.resources || [],
+            },
+            create: {
+                sessionId: session.id,
+                overallScore: payload.overallScore || 0,
+                duration: payload.duration || '00:00',
+                hardSkillsScore: payload.hardSkillsScore || 0,
+                softSkillsScore: payload.softSkillsScore || 0,
+                radarData: payload.radarData || [],
+                timelineData: payload.timelineData || [],
+                fillerWordsAnalysis: payload.fillerWordsAnalysis || [],
+                pacingAnalysis: payload.pacingAnalysis || [],
+                behavioralAnalysis: payload.behavioralAnalysis || {},
+                swot: payload.swot || {},
+                resources: payload.resources || [],
+            }
+        });
+
+        // Optionally, mark session as 'completed'
+        await this.prisma.interviewSession.update({
+             where: { id: sessionId },
+             data: { status: 'completed', completedAt: new Date() }
+        });
+
+        this.logger.log(`Successfully saved report for session ${sessionId}`);
+
+    } catch(error) {
+        this.logger.error(`Failed to save webhook report: ${error.message}`);
+    }
   }
 
   /**

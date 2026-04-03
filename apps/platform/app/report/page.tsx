@@ -1,7 +1,9 @@
+import { redirect } from "next/navigation";
 
-"use client";
+export default function ReportPage() {
+  redirect("/report/latest");
+}
 
-import { useState, useEffect } from "react";
 import { 
   CheckCircle2, 
   AlertCircle, 

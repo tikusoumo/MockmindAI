@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { backendPost } from "@/lib/backend";
 import { 
   Dialog, 
   DialogContent, 
@@ -61,17 +62,35 @@ export function NewSessionModal({ children, templates, defaultTab = "templates" 
     }
   };
 
-  const handleStartCustom = (data: any) => {
-    const params = new URLSearchParams({
-      custom: "true",
-      title: data.topic,
-      mode: data.mode,
-      difficulty: data.difficulty,
-      type: data.type,
-      persona: data.persona
-    });
-    router.push(`/interview?${params.toString()}`);
-    setOpen(false);
+  const handleStartCustom = async (data: any) => {
+    try {
+      // POST the fully populated form data, including multiple participants/invites
+      const response = await backendPost("/api/sessions", data);
+      
+      const params = new URLSearchParams({
+        sessionId: response.id,
+        title: data.topic,
+        mode: data.mode,
+        difficulty: data.difficulty,
+        type: data.type,
+        persona: data.persona
+      });
+      router.push(`/interview?${params.toString()}`);
+      setOpen(false);
+    } catch (e) {
+      console.error("Failed to start custom session:", e);
+      // fallback in case backend is down
+      const params = new URLSearchParams({
+        custom: "true",
+        title: data.topic,
+        mode: data.mode,
+        difficulty: data.difficulty,
+        type: data.type,
+        persona: data.persona
+      });
+      router.push(`/interview?${params.toString()}`);
+      setOpen(false);
+    }
   };
 
   const handleEditClick = (e: React.MouseEvent, template: InterviewTemplate) => {

@@ -42,24 +42,29 @@ export function CodeEditor({
       fontSize: 14,
       scrollBeyondLastLine: false,
       padding: { top: 16, bottom: 16 },
+      scrollbar: {
+        alwaysConsumeMouseWheel: false,
+        verticalScrollbarSize: 10,
+        horizontalScrollbarSize: 10,
+      },
     });
   };
 
   return (
-    <div className={`h-full w-full flex flex-col overflow-hidden rounded-md border bg-zinc-950 ${className}`}>
+    <div className={`h-full w-full flex flex-col overflow-hidden rounded-md border border-border bg-card ${className}`}>
       
       {/* Editor Header Bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-zinc-800">
-        <div className="flex items-center gap-2 text-zinc-400">
+      <div className="flex items-center justify-between px-4 py-2 bg-secondary border-b border-border">
+        <div className="flex items-center gap-2 text-muted-foreground">
             <Code2 className="h-4 w-4" />
             <span className="text-xs font-semibold tracking-wider uppercase">Code Editor</span>
         </div>
         
         <Select value={language} onValueChange={setLanguage}>
-          <SelectTrigger className="w-[140px] h-8 bg-zinc-950 border-zinc-800 text-xs">
+          <SelectTrigger className="w-[140px] h-8 bg-card border-border text-xs">
             <SelectValue placeholder="Language" />
           </SelectTrigger>
-          <SelectContent className="bg-zinc-950 border-zinc-800">
+          <SelectContent className="bg-popover border-border">
             {SUPPORTED_LANGUAGES.map((lang) => (
               <SelectItem key={lang.value} value={lang.value} className="text-xs">
                 {lang.label}

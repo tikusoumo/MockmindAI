@@ -1,0 +1,50 @@
+Start seeding ...
+ 5 | `))}toString(){return this.lines.join(`
+ 6 | `)}};var fc={red:me,gray:rt,dim:Ye,bold:j,underline:Xe,highlightSource:e=>e.highlight()},gc={red:e=>e,gray:e=>e,dim:e=>e,bold:e=>e,underline:e=>e,highlightSource:e=>e};function yc({message:e,originalMethod:t,isPanic:r,callArguments:n}){return{functionName:`prisma.${t}()`,message:e,isPanic:r??!1,callArguments:n}}function hc({callsite:e,message:t,originalMethod:r,isPanic:n,callArguments:i},o){let s=yc({message:t,originalMethod:r,isPanic:n,callArguments:i});if(!e||typeof window<"u"||process.env.NODE_ENV==="production")return s;let a=e.getLocation();if(!a||!a.lineNumber||!a.columnNumber)return s;let l=Math.max(1,a.lineNumber-3),c=Wt.read(a.fileName)?.slice(l,a.lineNumber),u=c?.lineAt(a.lineNumber);if(c&&u){let p=bc(u),y=wc(u);if(!y)return s;s.functionName=`${y.code})`,s.location=a,n||(c=c.mapLineAt(a.lineNumber,g=>g.slice(0,y.openingBraceIndex))),c=o.highlightSource(c);let h=String(c.lastLineNumber).length;if(s.contextLines=c.mapLines((g,E)=>o.gray(String(E).padStart(h))+" "+g).mapLines(g=>o.dim(g)).prependSymbol
+ 7 | `)}function Ec(e){let t=[e.fileName];return e.lineNumber&&t.push(String(e.lineNumber)),e.columnNumber&&t.push(String(e.columnNumber)),t.join(":")}function Gt(e){let t=e.showColors?fc:gc,r;return r=hc(e,t),xc(r,t)}var Gi=V(tn());function Bi(e,t,r){let n=Qi(e),i=Tc(n),o=Ac(i);o?Kt(o,t,r):t.addErrorMessage(()=>"Unknown error")}function Qi(e){return e.errors.flatMap(t=>t.kind==="Union"?Qi(t):[t])}function Tc(e){let t=new Map,r=[];for(let n of e){if(n.kind!=="InvalidArgumentType"){r.push(n);continue}let i=`${n.selectionPath.join(".")}:${n.argumentPath.join(".")}`,o=t.get(i);o?t.set(i,{...n,argument:{...n.argument,typeNames:Pc(o.argument.typeNames,n.argument.typeNames)}}):t.set(i,n)}return r.push(...t.values()),r}function Pc(e,t){return[...new Set(e.concat(t))]}function Ac(e){return Xr(e,(t,r)=>{let n=Ui(t),i=Ui(r);return n!==i?n-i:ji(t)-ji(r)})}function Ui(e){let t=0;return Array.isArray(e.selectionPath)&&(t+=e.selectionPath.length),Array.isArray(e.argumentPath)&&(t+=e.argumentPath.length),t}function ji(e){switch(
+ 8 | `)}getCurrentLineLength(){return this.currentLine.length}indentedCurrentLine(){let t=this.currentLine.padStart(this.currentLine.length+2*this.currentIndent);return this.marginSymbol?this.marginSymbol+t.slice(1):t}};Hi();var zt=class{constructor(t){this.value=t}write(t){t.write(this.value)}markAsError(){this.value.markAsError()}};var Zt=e=>e,Yt={bold:Zt,red:Zt,green:Zt,dim:Zt,enabled:!1},Wi={bold:j,red:me,green:et,dim:Ye,enabled:!0},Ie={write(e){e.writeLine(",")}};var W=class{constructor(t){this.contents=t}isUnderlined=!1;color=t=>t;underline(){return this.isUnderlined=!0,this}setColor(t){return this.color=t,this}write(t){let r=t.getCurrentLineLength();t.write(this.color(this.contents)),this.isUnderlined&&t.afterNextNewline(()=>{t.write(" ".repeat(r)).writeLine(this.color("~".repeat(this.contents.length)))})}};var se=class{hasError=!1;markAsError(){return this.hasError=!0,this}};var Fe=class extends se{items=[];addItem(t){return this.items.push(new zt(t)),this}getField(t){return this.items[t]}getPrintWidth(){r
+ 9 | Note that ${s.bold("include")} statements only accept relation fields.`,a})}function Cc(e,t,r){let n=t.arguments.getDeepSubSelectionValue(e.selectionPath)?.asObject();if(n){let i=n.getField("omit")?.value.asObject();if(i){Rc(e,t,i);return}if(n.hasField("select")){kc(e,t);return}}if(r?.[oe(e.outputType.name)]){Oc(e,t);return}t.addErrorMessage(()=>`Unknown field at "${e.selectionPath.join(".")} selection"`)}function Rc(e,t,r){r.removeAllFields();for(let n of e.outputType.fields)r.addSuggestion(new $(n.name,"false"));t.addErrorMessage(n=>`The ${n.red("omit")} statement includes every field of the model ${n.bold(e.outputType.name)}. At least one field must be included in the result`)}function kc(e,t){let r=e.outputType,n=t.arguments.getDeepSelectionParent(e.selectionPath)?.value,i=n?.isEmpty()??!1;n&&(n.removeAllFields(),Zi(n,r)),t.addErrorMessage(o=>i?`The ${o.red("`select`")} statement for type ${o.bold(r.name)} must not be empty. ${pt(o)}`:`The ${o.red("`select`")} statement for type ${o.bold(r.name)} needs ${
+10 | `)}};function Ne(e){return new nn(ro(e))}function ro(e){let t=new Me;for(let[r,n]of Object.entries(e)){let i=new er(r,no(n));t.addField(i)}return t}function no(e){if(typeof e=="string")return new k(JSON.stringify(e));if(typeof e=="number"||typeof e=="boolean")return new k(String(e));if(typeof e=="bigint")return new k(`${e}n`);if(e===null)return new k("null");if(e===void 0)return new k("undefined");if(Re(e))return new k(`new Prisma.Decimal("${e.toFixed()}")`);if(e instanceof Uint8Array)return Buffer.isBuffer(e)?new k(`Buffer.alloc(${e.byteLength})`):new k(`new Uint8Array(${e.byteLength})`);if(e instanceof Date){let t=Ht(e)?e.toISOString():"Invalid Date";return new k(`new Date("${t}")`)}return e instanceof to.ObjectEnumValue?new k(`Prisma.${e._getName()}`):De(e)?new k(`prisma.${oe(e.modelName)}.$fields.${e.name}`):Array.isArray(e)?Jc(e):typeof e=="object"?ro(e):new k(Object.prototype.toString.call(e))}function Jc(e){let t=new Fe;for(let r of e)t.addItem(no(r));return t}function tr(e,t){let r=t==="pretty"?Wi:Yt,
+
+PrismaClientValidationError: 
+Invalid `prisma.interviewTemplate.upsert()` invocation in
+Q:\Coding\ai_voice_agent\Monorepo\apps\api\prisma\seed.ts:66:53
+
+  63 async function main() {
+  64   console.log(`Start seeding ...`);
+  65   for (const t of interviewTemplates) {
+ΓåÆ 66     const template = await prisma.interviewTemplate.upsert({
+           where: {
+             id: "tech-round"
+           },
+           update: {
+             id: "tech-round",
+             title: "Tech Round",
+             description: "React, System Design, and CSS mastery.",
+             duration: "45 min",
+             difficulty: "Hard",
+             icon: "Code",
+             color: "bg-blue-500/10 text-blue-500",
+             type: "Technical"
+           },
+           create: {
+             id: "tech-round",
+             title: "Tech Round",
+             description: "React, System Design, and CSS mastery.",
+             duration: "45 min",
+             difficulty: "Hard",
+             icon: "Code",
+             color: "bg-blue-500/10 text-blue-500",
+             type: "Technical"
+             ~~~~
+           }
+         })
+
+Unknown argument `type`. Did you mean `title`? Available options are marked with ?.
+ clientVersion: "7.3.0",
+
+      at rr (Q:\Coding\ai_voice_agent\Monorepo\node_modules\.bun\@prisma+client@7.3.0+53e13ce96fca8a38\node_modules\@prisma\client\runtime\client.js:10:1379)
+      at handleRequestError (Q:\Coding\ai_voice_agent\Monorepo\node_modules\.bun\@prisma+client@7.3.0+53e13ce96fca8a38\node_modules\@prisma\client\runtime\client.js:65:7815)
+      at handleAndLogRequestError (Q:\Coding\ai_voice_agent\Monorepo\node_modules\.bun\@prisma+client@7.3.0+53e13ce96fca8a38\node_modules\@prisma\client\runtime\client.js:65:7467)
+      at request (Q:\Coding\ai_voice_agent\Monorepo\node_modules\.bun\@prisma+client@7.3.0+53e13ce96fca8a38\node_modules\@prisma\client\runtime\client.js:65:7174)
+

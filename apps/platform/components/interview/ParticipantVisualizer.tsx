@@ -158,9 +158,9 @@ export function ParticipantVisualizer({
       {volumes.map((vol, i) => (
         <div
           key={i}
-          className={cn(
+           className={cn(
             "w-1 rounded-full transition-[background-color] duration-150",
-            isActive ? barColor : barIdle
+            isActive ? barColor : "bg-muted"
           )}
           style={{ height: `${Math.max(vol, BAR_FLOOR)}px` }}
         />

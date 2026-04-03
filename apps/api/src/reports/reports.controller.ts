@@ -22,6 +22,13 @@ import {
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
+  @Post('webhook')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Webhook to receive generated reports from Python agent' })
+  async reportWebhook(@Body() payload: any): Promise<void> {
+    return this.reportsService.saveWebhookReport(payload);
+  }
+
   @Post('generate')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Generate a new interview report' })
@@ -48,6 +55,17 @@ export class ReportsController {
     @Query('userId') userId?: string,
   ): Promise<ReportListItemDto[]> {
     return this.reportsService.listReports(userId);
+  }
+
+  @Get('latest')
+  @ApiOperation({ summary: 'Get the latest report' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Latest report',
+    type: ReportResponseDto,
+  })
+  async getLatestReport(): Promise<ReportResponseDto> {
+    return this.reportsService.getLatestReport();
   }
 
   @Get(':id')

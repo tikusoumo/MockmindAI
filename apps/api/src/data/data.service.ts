@@ -199,18 +199,40 @@ export class DataService {
 
   constructor(private prisma: PrismaService) {}
 
-  async getUser() {
+  async getUser(userId: number) {
     try {
-      const user = await this.prisma.user.findFirst();
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          avatar: true,
+          level: true,
+          isVerified: true,
+          createdAt: true,
+        }
+      });
       return user || this.userData;
     } catch {
       return this.userData;
     }
   }
 
-  async updateUser(data: typeof defaultUser) {
-    this.userData = { ...this.userData, ...data };
-    return this.userData;
+  async updateUser(userId: number, data: typeof defaultUser) {
+    try {
+      return await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          name: data.name,
+          avatar: data.avatar,
+        }
+      });
+    } catch {
+      this.userData = { ...this.userData, ...data };
+      return this.userData;
+    }
   }
 
   async getInterviewTemplates() {
@@ -283,7 +305,9 @@ export class DataService {
 
   async getPastInterviews() {
     try {
-      const interviews = await this.prisma.pastInterview.findMany();
+      const interviews = await this.prisma.interviewSession.findMany({
+          orderBy: { createdAt: 'desc' }
+      });
       return interviews.length > 0 ? interviews : defaultPastInterviews;
     } catch {
       return defaultPastInterviews;
@@ -293,10 +317,11 @@ export class DataService {
   async createReport(data: any) {
     try {
       const { transcript, ...rest } = data;
-      
+
       return await this.prisma.report.create({
         data: {
           id: rest.id,
+          session: { connect: { id: rest.sessionId || "dummy" } },
           date: rest.date,
           overallScore: rest.overallScore,
           duration: rest.duration,

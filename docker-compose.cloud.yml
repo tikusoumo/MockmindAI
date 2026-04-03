@@ -45,6 +45,10 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    command: bun run start:dev
+    volumes:
+      - ./apps/api:/usr/src/app/apps/api
+      - /usr/src/app/apps/api/node_modules
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://app:app@db:5432/voice_agent}
       PORT: 8000
@@ -90,6 +94,40 @@ services:
     depends_on:
       - livekit
       - qdrant
+    restart: unless-stopped
+
+  # Python FastAPI HTTP server - REST API + Swagger Docs
+  agent-api:
+    build:
+      context: .
+      dockerfile: apps/ai-services/Dockerfile
+    command: ["python", "-m", "uvicorn", "agent.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      USE_LOCAL_AI: ${USE_LOCAL_AI:-false}
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://app:app@db:5432/voice_agent}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-google}
+      STT_PROVIDER: ${STT_PROVIDER:-google}
+      TTS_PROVIDER: ${TTS_PROVIDER:-google}
+      QDRANT_URL: http://qdrant:6333
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:3000,http://localhost:8000}
+    ports:
+      - "8001:8001"
+    depends_on:
+      db:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+      qdrant:
+        condition: service_started
     restart: unless-stopped
 
   # Qdrant Vector Database

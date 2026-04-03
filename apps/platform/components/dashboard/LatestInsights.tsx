@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, Mic, Timer, TrendingUp } from "lucide-react";
 import type { ReportData } from "@/data/mockData";
@@ -11,18 +12,18 @@ export function LatestInsights() {
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Latest Score</CardTitle>
-          <TrendingUp className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{latest.overallScore}%</div>
-          <p className="text-xs text-muted-foreground">
-            +2% from average
-          </p>
-        </CardContent>
-      </Card>
+      <Link href="/report/latest" className="group block">
+        <Card className="h-full hover:border-primary/40 hover:bg-muted/30 transition-all cursor-pointer">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium group-hover:text-primary transition-colors">Latest Score</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{latest.overallScore}%</div>
+            <p className="text-xs text-muted-foreground">+2% from average</p>
+          </CardContent>
+        </Card>
+      </Link>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Speaking Pace</CardTitle>

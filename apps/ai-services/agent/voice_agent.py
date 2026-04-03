@@ -82,6 +82,17 @@ class InterviewCoach(Agent):
         self.collector = collector
         self.current_question_idx = 0
         self.questions: list[str] = []
+        self.current_ide_content: str = ""
+
+    @function_tool()
+    async def read_candidates_code(
+        self,
+        context: RunContext,
+    ) -> str:
+        """Read the live code from the candidate's IDE. Use this when the user asks you to look at their code or when you need to evaluate their progress in a machine coding round."""
+        if not self.current_ide_content.strip():
+            return "The IDE is currently empty or the candidate hasn't typed anything yet."
+        return f"Here is the candidate's current code:\n\n{self.current_ide_content}"
 
     @function_tool()
     async def get_interview_tip(
@@ -272,7 +283,62 @@ async def voice_agent(ctx: JobContext):
         agent=agent,
         room=ctx.room,
     )
-    
+
+    @ctx.room.on("data_received")
+    def on_data_received(data_packet):
+        try:
+            payload = json.loads(data_packet.data.decode("utf-8"))
+            if payload.get("type") == "ide_change":
+                agent.current_ide_content = payload.get("code", "")
+                logger.debug("Received updated IDE content from data channel.")
+        except Exception as e:
+            logger.error(f"Error parsing data channel message: {e}")
+
+    @ctx.room.on("disconnected")
+    def on_disconnected(*args):
+        logger.info("Room disconnected, generating final report via webhook...")
+        session_data = collector.end_session()
+        
+        # Store it locally just in case
+        try:
+            from .routers.reports import store_session
+            store_session(session_data)
+        except ImportError:
+            pass
+            
+        import asyncio
+        import urllib.request
+        
+        async def push_webhook():
+            try:
+                from .analysis import ReportGenerator
+                generator = ReportGenerator()
+                report = generator.generate(session_data)
+                payload = report.to_dict()
+                
+                # Use standard library to avoid missing httpx/aiohttp in worker
+                api_url = "http://api:8000/api/reports/webhook"
+                req = urllib.request.Request(
+                    api_url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                
+                # Run in thread so it doesn't block
+                loop = asyncio.get_event_loop()
+                def make_req():
+                    with urllib.request.urlopen(req, timeout=30) as response:
+                        return response.status
+                
+                status = await loop.run_in_executor(None, make_req)
+                logger.info(f"Webhook pushed successfully: {status}")
+            except Exception as e:
+                logger.error(f"Failed to push webhook: {e}")
+                
+        # Fire and forget
+        asyncio.create_task(push_webhook())
+
     logger.info(f"Connected to room: {ctx.room.name} in {mode} mode")
 
 

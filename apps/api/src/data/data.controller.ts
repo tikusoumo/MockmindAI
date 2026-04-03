@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Put, Body } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, UseGuards, Req } from '@nestjs/common';
 import { DataService } from './data.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 class UserDto {
   name: string;
@@ -15,18 +16,19 @@ class CreateScheduleDto {
   interviewer: string;
 }
 
-@Controller('api')
+@Controller()
+@UseGuards(JwtAuthGuard)
 export class DataController {
   constructor(private readonly dataService: DataService) {}
 
   @Get('user')
-  async getUser() {
-    return this.dataService.getUser();
+  async getUser(@Req() req: any) {
+    return this.dataService.getUser(req.user.userId);
   }
 
   @Put('user')
-  async updateUser(@Body() body: UserDto) {
-    return this.dataService.updateUser(body as any);
+  async updateUser(@Req() req: any, @Body() body: UserDto) {
+    return this.dataService.updateUser(req.user.userId, body as any);
   }
 
   @Get('interview-templates')

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { backendPost } from "@/lib/backend";
+import { Eye, EyeOff } from "lucide-react";
 
 type AuthTab = "login" | "signup";
 
@@ -28,23 +29,43 @@ export default function AuthPage() {
   const [tab, setTab] = React.useState<AuthTab>("login");
   const [loading, setLoading] = React.useState(false);
 
-  const [login, setLogin] = React.useState({ email: "", password: "" });
+const [login, setLogin] = React.useState({ email: "", password: "" });        
   const [signup, setSignup] = React.useState({
     name: "",
     email: "",
     password: "",
     confirmPassword: "",
+    otp: ""
   });
+  const [otpSent, setOtpSent] = React.useState(false);
+  const [showLoginPassword, setShowLoginPassword] = React.useState(false);
+  const [showSignupPassword, setShowSignupPassword] = React.useState(false);
+
+  async function handleSendOtp(email: string) {
+    if (!email) {
+      toast.error("Please enter email first");
+      return;
+    }
+    setLoading(true);
+    try {
+      await backendPost("/api/auth/send-otp", { email });
+      setOtpSent(true);
+      toast.success("OTP sent to your email!");
+    } catch (err: any) {
+      toast.error(err.message || "Could not send OTP");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function onLoginSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
 
     try {
-      const data = await backendPost<AuthResponse>("/api/auth/login", login);
+      const data = await backendPost<AuthResponse>("/api/auth/login", { email: login.email, password: login.password });   
       localStorage.setItem("auth_token", data.token);
       toast.success("Signed in successfully");
-      // Force reload to update context with new token
       window.location.href = "/";
     } catch (err: any) {
       toast.error(err.message || "Invalid credentials");
@@ -69,12 +90,17 @@ export default function AuthPage() {
     setLoading(true);
 
     try {
-      const data = await backendPost<AuthResponse>("/api/auth/signup", signup);
+      const data = await backendPost<AuthResponse>("/api/auth/signup", { 
+        name: signup.name,
+        email: signup.email, 
+        password: signup.password,
+        code: signup.otp 
+      }); 
       localStorage.setItem("auth_token", data.token);
       toast.success("Account created successfully");
       window.location.href = "/";
     } catch (err: any) {
-      toast.error(err.message || "Could not create account");
+      toast.error(err.message || "Invalid OTP");
     } finally {
       setLoading(false);
     }
@@ -152,7 +178,7 @@ export default function AuthPage() {
                       required
                       value={login.email}
                       onChange={(e) =>
-                        setLogin((s) => ({ ...s, email: e.target.value }))
+                        setLogin((s) => ({ ...s, email: e.target.value }))      
                       }
                       placeholder="you@example.com"
                     />
@@ -168,24 +194,65 @@ export default function AuthPage() {
                         Forgot?
                       </Link>
                     </div>
-                    <Input
-                      id="login-password"
-                      type="password"
-                      autoComplete="current-password"
-                      required
-                      value={login.password}
-                      onChange={(e) =>
-                        setLogin((s) => ({ ...s, password: e.target.value }))
-                      }
-                      placeholder="••••••••"
-                    />
+                    <div className="relative">
+                      <Input
+                        id="login-password"
+                        type={showLoginPassword ? "text" : "password"}
+                        autoComplete="current-password"
+                        required
+                        value={login.password}
+                        onChange={(e) =>
+                          setLogin((s) => ({ ...s, password: e.target.value }))
+                        }
+                        placeholder="••••••••"
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full px-3 py-2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      >
+                        {showLoginPassword ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                        <span className="sr-only">Toggle password visibility</span>
+                      </Button>
+                    </div>
                   </div>
 
-                  <Button type="submit" className="w-full" disabled={loading}>
+                  <Button type="submit" className="w-full" disabled={loading}>  
                     {loading ? "Signing in…" : "Sign in"}
                   </Button>
 
-                  <p className="text-xs text-muted-foreground text-center">
+                  <div className="relative my-4">
+                    <div className="absolute inset-0 flex items-center">        
+                      <span className="w-full border-t" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                    </div>
+                  </div>
+
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    className="w-full gap-2"
+                    onClick={() => { window.location.href = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/google`; }}
+                  >
+                    <svg role="img" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+                      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                    </svg>
+                    Google
+                  </Button>
+
+                  <p className="text-xs text-muted-foreground text-center mt-4">
                     By continuing, you agree to our terms.
                   </p>
                 </form>
@@ -197,72 +264,143 @@ export default function AuthPage() {
               >
                 <form onSubmit={onSignupSubmit} className="mt-6 space-y-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="signup-name">Name</Label>
-                    <Input
-                      id="signup-name"
-                      autoComplete="name"
-                      required
-                      value={signup.name}
-                      onChange={(e) =>
-                        setSignup((s) => ({ ...s, name: e.target.value }))
-                      }
-                      placeholder="Your name"
-                    />
-                  </div>
+                      <Label htmlFor="signup-name">Name</Label>
+                      <Input
+                        id="signup-name"
+                        autoComplete="name"
+                        required
+                        disabled={otpSent}
+                        value={signup.name}
+                        onChange={(e) =>
+                          setSignup((s) => ({ ...s, name: e.target.value }))    
+                        }
+                        placeholder="Your name"
+                      />
+                    </div>
 
-                  <div className="grid gap-2">
-                    <Label htmlFor="signup-email">Email</Label>
-                    <Input
-                      id="signup-email"
-                      type="email"
-                      autoComplete="email"
-                      required
-                      value={signup.email}
-                      onChange={(e) =>
-                        setSignup((s) => ({ ...s, email: e.target.value }))
-                      }
-                      placeholder="you@example.com"
-                    />
-                  </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="signup-email">Email</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="signup-email"
+                          type="email"
+                          autoComplete="email"
+                          required
+                          disabled={otpSent}
+                          value={signup.email}
+                          onChange={(e) =>
+                            setSignup((s) => ({ ...s, email: e.target.value }))   
+                          }
+                          placeholder="you@example.com"
+                        />
+                        {!otpSent && (
+                          <Button type="button" onClick={() => handleSendOtp(signup.email)} disabled={loading}>
+                            Send OTP
+                          </Button>
+                        )}
+                      </div>
+                    </div>
 
-                  <div className="grid gap-2">
-                    <Label htmlFor="signup-password">Password</Label>
-                    <Input
-                      id="signup-password"
-                      type="password"
-                      autoComplete="new-password"
-                      required
-                      value={signup.password}
-                      onChange={(e) =>
-                        setSignup((s) => ({ ...s, password: e.target.value }))
-                      }
-                      placeholder="At least 8 characters"
-                    />
-                  </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="signup-password">Password</Label>
+                      <div className="relative">
+                        <Input
+                          id="signup-password"
+                          type={showSignupPassword ? "text" : "password"}
+                          autoComplete="new-password"
+                          required
+                          disabled={otpSent}
+                          value={signup.password}
+                          onChange={(e) =>
+                            setSignup((s) => ({ ...s, password: e.target.value }))
+                          }
+                          placeholder="At least 8 characters"
+                          className="pr-10"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-0 top-0 h-full px-3 py-2 text-muted-foreground hover:text-foreground"
+                          onClick={() => setShowSignupPassword(!showSignupPassword)}
+                          disabled={otpSent}
+                        >
+                          {showSignupPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                          <span className="sr-only">Toggle password visibility</span>
+                        </Button>
+                      </div>
+                    </div>
 
-                  <div className="grid gap-2">
-                    <Label htmlFor="signup-confirm">Confirm password</Label>
-                    <Input
-                      id="signup-confirm"
-                      type="password"
-                      autoComplete="new-password"
-                      required
-                      value={signup.confirmPassword}
-                      onChange={(e) =>
-                        setSignup((s) => ({
-                          ...s,
-                          confirmPassword: e.target.value,
-                        }))
-                      }
-                      placeholder="Repeat password"
-                    />
-                  </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="signup-confirm">Confirm password</Label>  
+                      <div className="relative">
+                        <Input
+                          id="signup-confirm"
+                          type={showSignupPassword ? "text" : "password"}
+                          autoComplete="new-password"
+                          required
+                          disabled={otpSent}
+                          value={signup.confirmPassword}
+                          onChange={(e) =>
+                            setSignup((s) => ({
+                              ...s,
+                              confirmPassword: e.target.value,
+                            }))
+                          }
+                          placeholder="Repeat password"
+                          className="pr-10"
+                        />
+                      </div>
+                    </div>
+                  {otpSent && (
+                    <div className="grid gap-2">
+                      <Label htmlFor="signup-otp">OTP Code</Label>
+                      <Input
+                        id="signup-otp"
+                        type="text"
+                        required
+                        value={signup.otp}
+                        onChange={(e) =>
+                          setSignup((s) => ({ ...s, otp: e.target.value }))   
+                        }
+                        placeholder="123456"
+                      />
+                    </div>
+                  )}
 
-                  <Button type="submit" className="w-full" disabled={loading}>
-                    {loading ? "Creating…" : "Create account"}
+                  <Button type="submit" className="w-full" disabled={loading || !otpSent}>
+                    {loading ? "Verifying…" : "Sign up with OTP"}
                   </Button>
 
-                  <p className="text-xs text-muted-foreground text-center">
+                  <div className="relative my-4">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                    </div>
+                  </div>
+
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    className="w-full gap-2"
+                    onClick={() => { window.location.href = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/google`; }}
+                  >
+                    <svg role="img" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+                      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                    </svg>
+                    Google
+                  </Button>
+
+                  <p className="text-xs text-muted-foreground text-center mt-4">
                     Creating an account means you accept our terms.
                   </p>
                 </form>

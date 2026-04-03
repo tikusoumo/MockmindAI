@@ -593,7 +593,7 @@ async def run_voice_mode(webcam: WebcamCapture, args):
     speech_frames = []
     silence_counter = 0
     interrupt_counter = 0
-    SILENCE_THRESHOLD = 20
+    SILENCE_THRESHOLD = 60
     inference_f32 = np.empty(512, dtype=np.float32)
 
     from datetime import datetime
@@ -609,7 +609,7 @@ async def run_voice_mode(webcam: WebcamCapture, args):
             if prob > 0.4:
                 if playing or not playback_queue.empty():
                     interrupt_counter += 1
-                    if interrupt_counter > 2:
+                    if interrupt_counter > 5:
                         if current_playback_task:
                             current_playback_task.cancel()
                         sd.stop()

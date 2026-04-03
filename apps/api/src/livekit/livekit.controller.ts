@@ -5,24 +5,37 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiProperty } from '@nestjs/swagger';
 import { LivekitService } from './livekit.service';
 
 class CreateRoomDto {
+  @ApiProperty({ description: 'The unique name of the LiveKit room' })
   name: string;
+
+  @ApiProperty({ required: false, description: 'Seconds to wait before closing empty room' })
   empty_timeout?: number;
+
+  @ApiProperty({ required: false, description: 'Maximum number of participants' })
   max_participants?: number;
 }
 
 class CreateTokenDto {
+  @ApiProperty({ description: 'The unique name of the LiveKit room to join' })
   room_name: string;
+
+  @ApiProperty({ description: 'The identity/name of the participant' })
   participant_name: string;
+
+  @ApiProperty({ required: false, description: 'Optional JSON stringified metadata' })
   metadata?: string;
 }
 
+@ApiTags('LiveKit Video Calling')
 @Controller('livekit')
 export class LivekitController {
   constructor(private readonly livekitService: LivekitService) {}
 
+  @ApiOperation({ summary: 'Create a new LiveKit room' })
   @Post('rooms')
   async createRoom(@Body() body: CreateRoomDto) {
     if (!this.livekitService.isConfigured) {
@@ -46,6 +59,7 @@ export class LivekitController {
     }
   }
 
+  @ApiOperation({ summary: 'Generate an access token for a participant' })
   @Post('token')
   async createToken(@Body() body: CreateTokenDto) {
     if (!this.livekitService.isConfigured) {
@@ -69,6 +83,7 @@ export class LivekitController {
     }
   }
 
+  @ApiOperation({ summary: 'Generate a special identity token for AI Agents' })
   @Post('agent-token')
   async createAgentToken(@Body() body: CreateTokenDto) {
     if (!this.livekitService.isConfigured) {

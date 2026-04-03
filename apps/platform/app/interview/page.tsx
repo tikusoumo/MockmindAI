@@ -95,7 +95,8 @@ function InterviewPageContent() {
     questions: [],
     description: sessionDbData?.focusAreas || "Practice session",
     icon: isCodingRound ? "Code" : "Sparkles",
-    color: isCodingRound ? "blue" : "blue"
+    color: isCodingRound ? "blue" : "blue",
+    persona: sessionDbData?.persona || searchParams.get("persona") || "Sarah",
   };
 
   const [liveKitToken, setLiveKitToken] = useState<string>("");
@@ -107,8 +108,12 @@ function InterviewPageContent() {
      import("@/lib/backend").then(({ backendPost }) => {
         backendPost<{token: string, url: string}>("/api/livekit/token", {
            room_name: `interview-${sessionId || templateId || "practice"}`,
-           participant_name: currentUser?.name || "Candidate",
-        }).then((data) => {
+           participant_name: currentUser?.name || "Candidate",            
+           metadata: JSON.stringify({
+               templateId: sessionId || templateId,
+               templateTitle: customTitle || "Interview",
+               mode: searchParams.get("mode") || "strict"
+            })        }).then((data) => {
            if (mounted) {
               setLiveKitToken(data.token);
               setLiveKitUrl(data.url);
@@ -299,7 +304,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData }:
       
       sessionParts.forEach((p: any) => {
           const roleNormalized = p.role?.toLowerCase() || '';
-          if (roleNormalized === 'candidate' && p.email !== currentUser?.email) {
+          if (roleNormalized === 'candidate' && p.email !== (currentUser as any)?.email) {
               candidates.push({
                   id: p.id,
                   name: p.name || p.email?.split('@')[0] || "Unknown",
@@ -313,7 +318,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData }:
       });
   } else {
       // Dynamic rendering directly from templates instead of the static 4 users
-      const personaName = (searchParams.get("persona") as string) || template?.persona || "Sarah";
+      const personaName = sessionDbData?.persona || template?.persona || "Sarah";
       interviewers = [
           { id: "ai-1", name: `${personaName} (Lead)`, role: "AI Agent", avatar: `https://i.pravatar.cc/150?u=${personaName.toLowerCase()}`, speaking: isAgentSpeaking, isAI: true }
       ];
@@ -468,6 +473,21 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData }:
             </h1>
             <Badge variant="outline" className="shrink-0 bg-green-500/10 text-green-500 border-green-500/20">Live</Badge>
             <span className="shrink-0 tabular-nums text-sm text-muted-foreground">{formatTime(elapsedTime)}</span>
+
+            {/* Share Link Button */}
+            <Button 
+                variant="outline" 
+                size="sm" 
+                className="h-6 ml-2 gap-1 text-xs"
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href);
+                  alert("Meeting link copied to clipboard!");
+                }}
+            >
+                <Users className="h-3 w-3" />
+                Invite
+            </Button>
+
             <div className="flex -space-x-2 ml-4">
                 {allParticipants.slice(0, 3).map((p) => (
                     <Avatar key={p.id} className="h-6 w-6 border border-muted drop-shadow-sm">

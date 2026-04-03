@@ -70,3 +70,25 @@ export async function backendPut<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
 }
+
+export async function backendPostFormData<T>(path: string, formData: FormData): Promise<T> {
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+  const url = `${backendUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  
+  const token = typeof window !== 'undefined' ? localStorage.getItem("auth_token") : null;
+  const headers: HeadersInit = {
+    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  
+  if (!res.ok) {
+    const err = await res.text().catch(() => "Unknown error");
+    throw new Error(`FormData API Error: ${res.status} ${err}`);
+  }
+  return res.json();
+}

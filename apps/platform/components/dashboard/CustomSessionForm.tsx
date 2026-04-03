@@ -32,31 +32,33 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
   const [isGlobal, setIsGlobal] = React.useState(false);
   
   // Multiple File Upload State
-  const [selectedFiles, setSelectedFiles] = React.useState<{id: string, name: string, size: string, isUploading: boolean}[]>([]);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+    const [selectedFiles, setSelectedFiles] = React.useState<{id: string, name: string, size: string, isUploading: boolean, file: File}[]>([]);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const newFiles = Array.from(files).map(file => ({
-        id: Math.random().toString(36).substring(7),
-        name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
-        isUploading: true
-      }));
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        const newFiles = Array.from(files).map(file => ({
+          id: Math.random().toString(36).substring(7),
+          name: file.name,
+          size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
+          isUploading: true,
+          file: file
+        }));
 
-      setSelectedFiles(prev => [...prev, ...newFiles]);
+        setSelectedFiles(prev => [...prev, ...newFiles]);
 
-      // Simulate individual upload progress for each new file
-      newFiles.forEach(nf => {
-        setTimeout(() => {
-          setSelectedFiles(current => 
-            current.map(f => f.id === nf.id ? { ...f, isUploading: false } : f)
-          );
-        }, 1000 + Math.random() * 2000); // Randomized simulated upload time
-      });
-    }
-  };
+        // Simulate individual upload progress for each new file
+        // (UI indication only, actual upload happens on Start Session)
+        newFiles.forEach(nf => {
+          setTimeout(() => {
+            setSelectedFiles(current =>
+              current.map(f => f.id === nf.id ? { ...f, isUploading: false } : f)
+            );
+          }, 1000 + Math.random() * 2000);
+        });
+      }
+    };
 
   const removeFile = (id: string) => {
     setSelectedFiles(prev => prev.filter(f => f.id !== id));

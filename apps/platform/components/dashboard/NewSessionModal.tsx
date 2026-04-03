@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { backendPost } from "@/lib/backend";
+import { backendPost, backendPostFormData } from "@/lib/backend";
 import { 
   Dialog, 
   DialogContent, 
@@ -65,8 +65,22 @@ export function NewSessionModal({ children, templates, defaultTab = "templates" 
   const handleStartCustom = async (data: any) => {
     try {
       // POST the fully populated form data, including multiple participants/invites
-      const response = await backendPost("/api/sessions", data);
-      
+      const response = await backendPost<{id: string}>("/api/sessions", data);
+
+      if (data.files && data.files.length > 0) {
+        for (const fileObj of data.files) {
+          if (fileObj.file) {
+            const formData = new FormData();
+            formData.append('file', fileObj.file);
+            try {
+              await backendPostFormData<any>(`/api/agent/upload/${response?.id}`, formData);
+            } catch (err) {
+              console.error("Failed to upload document for RAG:", err);
+            }
+          }
+        }
+      }
+
       const params = new URLSearchParams({
         sessionId: response.id,
         title: data.topic,

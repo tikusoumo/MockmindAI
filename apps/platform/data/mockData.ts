@@ -30,6 +30,7 @@ export interface InterviewTemplate {
   // RAG-related fields
   documents?: TemplateDocument[];
   mode?: InterviewMode;
+  persona?: string;
 }
 
 export interface ProgressStat {

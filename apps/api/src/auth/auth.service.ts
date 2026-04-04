@@ -140,4 +140,17 @@ export class AuthService {
     const token = this.generateToken(user);
     return { user: this.sanitizeUser(user), token };
   }
-}
+  async changePassword(userId: number, currentPassword: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.password_hash) {
+      throw new UnauthorizedException('No password set for this account. Use Google sign-in.');
+    }
+    const isValid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isValid) {
+      throw new UnauthorizedException('Current password is incorrect.');
+    }
+    const password_hash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({ where: { id: userId }, data: { password_hash } });
+    return { message: 'Password updated successfully.' };
+  }
+}

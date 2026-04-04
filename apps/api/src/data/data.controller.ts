@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Body, Param, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { DataService } from './data.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -27,13 +27,35 @@ export class DataController {
   }
 
   @Put('user')
-  async updateUser(@Req() req: any, @Body() body: UserDto) {
-    return this.dataService.updateUser(req.user.userId, body as any);
+  async updateUser(@Req() req: any, @Body() body: any) {
+    return this.dataService.updateUser(req.user.userId, body);
+  }
+
+  @Delete('user')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteUser(@Req() req: any) {
+    return this.dataService.deleteUser(req.user.userId);
   }
 
   @Get('interview-templates')
   async getInterviewTemplates() {
     return this.dataService.getInterviewTemplates();
+  }
+
+  @Post('interview-templates')
+  async createInterviewTemplate(@Body() body: any) {
+    return this.dataService.createInterviewTemplate(body);
+  }
+
+  @Patch('interview-templates/:id')
+  async updateInterviewTemplate(@Param('id') id: string, @Body() body: any) {
+    return this.dataService.updateInterviewTemplate(id, body);
+  }
+
+  @Delete('interview-templates/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteInterviewTemplate(@Param('id') id: string) {
+    return this.dataService.deleteInterviewTemplate(id);
   }
 
   @Get('progress-stats')

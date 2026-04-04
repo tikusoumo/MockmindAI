@@ -79,8 +79,9 @@ model InterviewSession {
   materials   Json     @default("[]") // Array of { name: 'resume.pdf', url: '...', size: 1024 }
   resumeText  String?  @db.Text       // Extracted text from uploaded materials
   companyInfo String?  @db.Text       // Job Description or Company Details
-  
+
   // ----- Configuration -----
+  accessType  String   @default("link")      // "link" or "restricted"
   type        String   @default("Technical") // E.g., Behavioral, Technical
   difficulty  String   @default("medium")
   aiBehavior  String   @default("learning")  // E.g., "learning" (Hints & Guidance), "strict", "mock"

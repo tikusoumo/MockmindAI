@@ -15,14 +15,11 @@ RUN bun install
 # Copy the full repo
 COPY . .
 
-# Build Next.js app
-WORKDIR /app/apps/platform
-RUN bun run build
-
-ENV NODE_ENV=production
+ENV NODE_ENV=development
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
 EXPOSE 3000
 
-CMD ["bun", "run", "start"]
+# Support both dev and production modes via NODE_ENV
+CMD ["sh", "-c", "if [ \"$NODE_ENV\" = \"production\" ]; then cd apps/platform && bun run build && bun run start; else cd apps/platform && bun run dev; fi"]

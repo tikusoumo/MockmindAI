@@ -66,8 +66,11 @@ export class LivekitService {
       throw new Error('LiveKit is not configured');
     }
 
+    const uniqueIdentity = `${participantName}-${Date.now().toString(36).substring(4)}`;
+    
     const token = new AccessToken(apiKey, apiSecret, {
-      identity: participantName,
+      identity: uniqueIdentity,
+      name: participantName, // this preserves the display name while making identity unique
       metadata,
     });
 

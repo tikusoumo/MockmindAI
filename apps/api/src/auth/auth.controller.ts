@@ -1,8 +1,9 @@
-import { Controller, Post, Get, Body, Req, UseGuards, Res } from '@nestjs/common';
+import { Controller, Post, Delete, Get, Body, Req, UseGuards, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -29,14 +30,24 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Verify an OTP code' })
   @Post('verify-otp')
-  async verifyOtp(@Body() body: { email: string, code: string, name?: string, password?: string }) {
+  async verifyOtp(@Body() body: { email: string; code: string; name?: string; password?: string }) {
     return this.authService.verifyOtpAndLogin(body.email, body.code, body.name, body.password);
+  }
+
+  @ApiOperation({ summary: 'Change authenticated user password' })
+  @Post('change-password')
+  @UseGuards(JwtAuthGuard)
+  async changePassword(
+    @Req() req: any,
+    @Body() body: { currentPassword: string; newPassword: string },
+  ) {
+    return this.authService.changePassword(req.user.userId, body.currentPassword, body.newPassword);
   }
 
   @ApiOperation({ summary: 'Initiate Google OAuth2 flow' })
   @Get('google')
   @UseGuards(AuthGuard('google'))
-  async googleAuth(@Req() req) {
+  async googleAuth() {
     // Initiates Google Auth
   }
 

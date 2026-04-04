@@ -1,13 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // webpack: (config) => {
-  //   config.watchOptions = {
-  //     poll: 1000,
-  //     aggregateTimeout: 300,
-  //   }
-  //   return config
-  // },
+  // Next.js 16 uses Turbopack by default. Configure properly for HMR behind proxy.
+  turbopack: {},
+
+  // If you need to configure HMR host for proxied environments, ensure this is set as env var
+  // The frontend will use HMR_HOST, HMR_PORT, HMR_PROTOCOL env vars passed from docker-compose
 };
 
 export default nextConfig;

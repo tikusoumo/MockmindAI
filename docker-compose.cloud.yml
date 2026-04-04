@@ -32,11 +32,11 @@ services:
   # LiveKit Server - Real-time communication
   livekit:
     image: livekit/livekit-server:latest
-    command: --dev --bind 0.0.0.0
+    command: --dev --bind 0.0.0.0 --udp-port 52000-52100
     ports:
       - "7880:7880"   # WebSocket
       - "7881:7881"   # RTC over TCP
-      - "50000-50100:50000-50100/udp"  # RTC over UDP
+      - "52000-52100:52000-52100/udp"  # RTC over UDP (avoid Windows excluded UDP range)
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
 

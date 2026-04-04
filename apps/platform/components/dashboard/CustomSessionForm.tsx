@@ -25,6 +25,7 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
   const [type, setType] = React.useState<string>(initialData?.type || "Technical");
   const [difficulty, setDifficulty] = React.useState<string>(initialData?.difficulty || "Medium");
   const [mode, setMode] = React.useState<string>(initialData?.mode || "learning");
+  const [accessType, setAccessType] = React.useState<string>("link");
   const [persona, setPersona] = React.useState<string>("sarah");
 
   const [interviewerCount, setInterviewerCount] = React.useState<string>("1");
@@ -87,19 +88,19 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
   };
 
   const handleStart = () => {
-    onStart({ topic, description, type, difficulty, mode, persona, interviewerCount, invites, files: selectedFiles });
+    onStart({ topic, description, type, difficulty, mode, persona, accessType, interviewerCount, invites, files: selectedFiles });
   };
 
   const handleSave = () => {
     if (onSaveTemplate) {
-      onSaveTemplate({ 
+      onSaveTemplate({
         id: initialData?.id || `custom-${Date.now()}`,
-        title: topic, 
-        description, 
-        type, 
+        title: topic,
+        description,
+        type,
         difficulty, 
         mode,
-        isGlobal,
+        accessType,
         interviewerCount,
         icon: initialData?.icon || 'Sparkles',
         color: initialData?.color || 'bg-blue-500/10 text-blue-500',
@@ -311,9 +312,27 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
                 </Select>
               </div>
 
+              <div className="grid gap-2">
+                <Label>Link Sharing & Access Control</Label>
+                <Select value={accessType} onValueChange={setAccessType}>
+                  <SelectTrigger className="w-[300px]">
+                    <SelectValue placeholder="Select Access Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="link">Anyone with the link (Public)</SelectItem>
+                    <SelectItem value="restricted">Restricted (Only invited below)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {accessType === "link" 
+                    ? "Anyone who receives the interview link can join as a candidate." 
+                    : "Only participants added below will receive an email and be allowed to join."}
+                </p>
+              </div>
+
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <Label>Invite Others</Label>
+                  <Label>Invite Others by Email</Label>
                   <Button variant="outline" size="sm" onClick={addInvite} className="h-8 gap-1">
                     <Plus className="h-3.5 w-3.5" /> Add Participant
                   </Button>

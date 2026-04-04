@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
+import { Logger } from '@nestjs/common';
 import {
   ReportResponseDto,
   ReportListItemDto,
@@ -20,6 +21,7 @@ import {
 @ApiTags('Reports')
 @Controller('reports')
 export class ReportsController {
+  private readonly logger = new Logger(ReportsController.name);
   constructor(private readonly reportsService: ReportsService) {}
 
   @Post('webhook')
@@ -81,6 +83,8 @@ export class ReportsController {
     description: 'Report not found',
   })
   async getReport(@Param('id') id: string): Promise<ReportResponseDto> {
+    this.logger.log(`Fetching report: ${id}`);
+    if (id === 'latest') return this.reportsService.getLatestReport();
     return this.reportsService.getReport(id);
   }
 

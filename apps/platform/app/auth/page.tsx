@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { backendPost } from "@/lib/backend";
 import { Eye, EyeOff } from "lucide-react";
+import { Suspense } from "react";
 
 type AuthTab = "login" | "signup";
 
@@ -25,7 +26,17 @@ interface AuthResponse {
 }
 
 export default function AuthPage() {
+  return (
+    <Suspense>
+      <AuthPageContent />
+    </Suspense>
+  );
+}
+
+function AuthPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo") || "/";
   const [tab, setTab] = React.useState<AuthTab>("login");
   const [loading, setLoading] = React.useState(false);
 
@@ -66,7 +77,7 @@ const [login, setLogin] = React.useState({ email: "", password: "" });
       const data = await backendPost<AuthResponse>("/api/auth/login", { email: login.email, password: login.password });   
       localStorage.setItem("auth_token", data.token);
       toast.success("Signed in successfully");
-      window.location.href = "/";
+      window.location.href = returnTo;
     } catch (err: any) {
       toast.error(err.message || "Invalid credentials");
     } finally {
@@ -98,7 +109,7 @@ const [login, setLogin] = React.useState({ email: "", password: "" });
       }); 
       localStorage.setItem("auth_token", data.token);
       toast.success("Account created successfully");
-      window.location.href = "/";
+      window.location.href = returnTo;
     } catch (err: any) {
       toast.error(err.message || "Invalid OTP");
     } finally {

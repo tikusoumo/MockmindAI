@@ -24,39 +24,50 @@ interface NewSessionModalProps {
   children: React.ReactNode;
   templates: InterviewTemplate[];
   defaultTab?: "templates" | "custom";
+  defaultSelectedTemplateId?: string;
 }
 
-export function NewSessionModal({ children, templates, defaultTab = "templates" }: NewSessionModalProps) {
+export function NewSessionModal({ children, templates, defaultTab = "templates", defaultSelectedTemplateId }: NewSessionModalProps) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState(defaultTab);
-  const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | null>(null);
-  
-  const [localTemplates, setLocalTemplates] = React.useState<InterviewTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | null>(defaultSelectedTemplateId ?? null);
   const [editingTemplate, setEditingTemplate] = React.useState<InterviewTemplate | null>(null);
 
-  const allTemplates = React.useMemo(() => {
-    const combined = [...templates];
-    localTemplates.forEach(lt => {
-      const idx = combined.findIndex(t => t.id === lt.id);
-      if (idx !== -1) combined[idx] = lt;
-      else combined.push(lt);
-    });
-    return combined;
-  }, [templates, localTemplates]);
-
+  // All templates come from backend (passed as props) — no localStorage merge needed
+  const allTemplates = templates;
   const selectedTemplate = allTemplates.find(t => t.id === selectedTemplateId);
 
   // Reset states when opening/closing
   React.useEffect(() => {
     if (open) {
-      setActiveTab(defaultTab);
+      setActiveTab(defaultSelectedTemplateId ? "templates" : defaultTab);
+      setSelectedTemplateId(defaultSelectedTemplateId ?? null);
       setEditingTemplate(null);
     }
-  }, [open, defaultTab]);
+  }, [open, defaultTab, defaultSelectedTemplateId]);
 
-  const handleStartFromTemplate = () => {
+const handleStartFromTemplate = async () => {
     if (selectedTemplateId) {
+      const template = allTemplates.find(t => t.id === selectedTemplateId);
+      if (template) {
+        try {
+          const data = {
+            title: template.title,
+            type: template.type,
+            description: template.description || "",
+            difficulty: template.difficulty || "medium",
+            mode: "strict",
+            accessType: "link"
+          };
+          const response = await backendPost<{id: string}>("/api/sessions", data);
+          router.push(`/interview?sessionId=${response.id}`);
+          setOpen(false);
+          return;
+        } catch (e) {
+          console.error("Failed to start session from template", e);
+        }
+      }
       router.push(`/interview?template=${selectedTemplateId}&mode=strict`);
       setOpen(false);
     }
@@ -114,15 +125,7 @@ export function NewSessionModal({ children, templates, defaultTab = "templates" 
   };
 
   const handleSaveTemplate = (data: InterviewTemplate) => {
-    setLocalTemplates(prev => {
-      const existing = prev.findIndex(t => t.id === data.id);
-      if (existing !== -1) {
-        const next = [...prev];
-        next[existing] = data;
-        return next;
-      }
-      return [...prev, data];
-    });
+    // Templates are now persisted in the DB via useTemplates hook (not local state)
     setActiveTab("templates");
     setSelectedTemplateId(data.id);
   };

@@ -1,0 +1,11 @@
+
+             {/* Remote user camera feed */}
+             {!isLocal && !isAI && p.lkpParticipant && hasCam && (
+                 <div className="absolute inset-0 z-0 [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:transform [&>video]:-scale-x-100">
+                     {p.lkpParticipant.getTrackPublication(Track.Source.Camera) && (
+                         <VideoTrack trackRef={{ participant: p.lkpParticipant, source: Track.Source.Camera, publication: p.lkpParticipant.getTrackPublication(Track.Source.Camera) }} />
+                     )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
+                    {speaking && isAI && <div className="absolute -inset-2 rounded-full bg-indigo-500/20 blur-lg animate-pulse"></div>}

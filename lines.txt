@@ -1,0 +1,16 @@
+
+  apps\platform\app\interview\page.tsx:374:      sessionParts.forEach((p: any) => {
+  apps\platform\app\interview\page.tsx:375:          const roleNormalized = p.role?.toLowerCase() || '';
+  apps\platform\app\interview\page.tsx:376:          if (roleNormalized === 'candidate' && p.email !== (currentUser as any)?.email) {
+> apps\platform\app\interview\page.tsx:377:              candidates.push({
+  apps\platform\app\interview\page.tsx:378:                  id: p.id,
+  apps\platform\app\interview\page.tsx:379:                  name: p.name || p.email?.split('@')[0] || "Unknown",
+  apps\platform\app\interview\page.tsx:380:                  role: p.role,
+  apps\platform\app\interview\page.tsx:381:                  avatar: `https://i.pravatar.cc/150?u=${p.email}`,
+  apps\platform\app\interview\page.tsx:382:                  isLocal: false,
+  apps\platform\app\interview\page.tsx:383:                  camOn: true,
+  apps\platform\app\interview\page.tsx:384:                  micOn: false
+  apps\platform\app\interview\page.tsx:385:              });
+  apps\platform\app\interview\page.tsx:386:          }
+  apps\platform\app\interview\page.tsx:387:      });
+

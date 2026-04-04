@@ -196,7 +196,7 @@ function InterviewPageContent() {
      return () => { mounted = false; };
   }, [templateId, sessionId, currentUser?.name, isUserLoaded]);
 
-  if (!currentUser || !liveKitToken) {
+  if (!liveKitToken) {
      return <div className="flex flex-col h-full items-center justify-center gap-4 text-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         <p className="text-muted-foreground text-sm">Connecting to session...</p>
@@ -402,7 +402,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
       { id: "peer-1", name: "Eliza (Pairing)", role: "Candidate", avatar: "https://i.pravatar.cc/150?u=eliza", isLocal: false, camOn: true, micOn: false },
   ];
 
-  let interviewers: any[], candidates: any[];
+  let interviewers, candidates;
 
   if (sessionDbData && sessionDbData.participants) {
       interviewers = [
@@ -538,6 +538,9 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                     isPinned && "opacity-100 bg-indigo-500/80 hover:bg-indigo-600",
                     isMainView && "opacity-100"
                 )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                 onClick={() => handlePin(p.id)}
              >
                  <Pin className="h-4 w-4" />
@@ -552,8 +555,14 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                             ))}
                         </div>
                     )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                  </div>
              )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
 
              {/* Local user camera feed */}
              {isLocal && hasCam && (
@@ -569,6 +578,9 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                  </div>
              )}
 
+             {!hasCam && (
+                <div className="z-10 relative">
+
              {/* Remote user camera feed */}
              {!isLocal && !isAI && p.lkpParticipant && hasCam && (
                  <div className="absolute inset-0 z-0 [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:transform [&>video]:-scale-x-100">
@@ -580,18 +592,24 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                 <div className="z-10 relative">
                     {speaking && isAI && <div className="absolute -inset-2 rounded-full bg-indigo-500/20 blur-lg animate-pulse"></div>}
                     {speaking && !isAI && <div className="absolute -inset-2 rounded-full bg-emerald-500/10 blur-md animate-pulse"></div>}
-
+                    
                     <Avatar className={cn(
                         "border-2 transition-all duration-300 shadow-md",
                         isMainView ? "h-32 w-32" : (!isCodingRound ? "h-20 w-20" : "h-14 w-14"),
                         speaking && isAI ? "border-indigo-500 scale-105" : 
                         speaking && !isAI ? "border-emerald-500 scale-105" : "border-muted"
-                    )}>
+                    )}
+
+             {!hasCam && (
+                <div className="z-10 relative">>
                         <AvatarImage src={p.avatar} />
                         <AvatarFallback>{p.name[0]}</AvatarFallback>
                     </Avatar>
                 </div>
              )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
 
              <div className="absolute bottom-4 left-4 z-20 flex flex-col items-start gap-2 px-1 transition-all duration-300">
                 {/* Name and Role */}
@@ -599,19 +617,28 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                     <h3 className={cn(
                         "text-sm font-semibold flex items-center gap-1 drop-shadow-md",
                         hasCam ? "text-white" : "text-foreground"
-                    )}>
+                    )}
+
+             {!hasCam && (
+                <div className="z-10 relative">>
                         {p.name} {p.id === 'self' && "(You)"}
                         {p.isHost && (
                             <Badge variant="secondary" className={cn("px-1.5 py-0 text-[10px] ml-1 font-medium", hasCam ? "bg-indigo-500/30 text-white border-white/20" : "bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border-indigo-500/20")}>
                                 Host
                             </Badge>
                         )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                     </h3>
                     <p className={cn(
                         "text-xs font-medium transition-colors drop-shadow-md",
                         speaking && isAI ? "text-indigo-400 dark:text-indigo-300" : 
                         speaking && !isAI ? "text-emerald-500 dark:text-emerald-400" : "text-muted-foreground"
-                    )}>
+                    )}
+
+             {!hasCam && (
+                <div className="z-10 relative">>
                         {p.role}{isAI && speaking ? " · Speaking..." : isAI && isAgentListening ? " · Listening..." : ""}
                     </p>
                 </div>
@@ -623,11 +650,17 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                             <VideoOff className="w-3.5 h-3.5" />
                         </Badge>
                     )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                     {(!micOn || (p.id !== 'self' && 'micOn' in p && !(p as any).micOn)) && (
                         <Badge variant="secondary" className="bg-black/60 dark:bg-black/80 text-white border-none py-0 px-1.5 h-6 text-[10px] shadow-sm">
                             <MicOff className="w-3 h-3 text-red-500 mr-1"/>Muted
                         </Badge>
                     )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                 </div>
 
                 {/* Audio Visualizer */}
@@ -639,6 +672,9 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                         align="left"
                     />
                 )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
              </div>
         </Card>
       );
@@ -723,6 +759,9 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                 {allParticipants.length > 3 && (
                      <div className="h-6 w-6 rounded-full bg-secondary border border-muted flex items-center justify-center text-[10px] text-muted-foreground shadow-sm">+{allParticipants.length - 3}</div>
                 )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
             </div>
           </div>
         </div>
@@ -773,7 +812,10 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                  allParticipants.length <= 2 ? "grid-cols-1 sm:grid-cols-2" :
                  allParticipants.length <= 4 ? "grid-cols-2" :
                  "grid-cols-2 lg:grid-cols-3"
-             )}>
+             )}
+
+             {!hasCam && (
+                <div className="z-10 relative">>
                  {allParticipants.map(p => (
                      <div key={p.id} className="w-full h-full max-h-[45vh] lg:max-h-[600px] flex justify-center">
                          {renderParticipant(p, false)}
@@ -827,6 +869,9 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                              </div>
                           </Card>
                      )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                      {effectiveViewMode === 'presentation' && (
                           <Card className="flex-1 overflow-hidden border-border bg-black flex items-center justify-center flex-col relative group shadow-xl">
                               <MonitorUp className="w-16 h-16 text-indigo-500/20 absolute z-0" />
@@ -838,13 +883,22 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                               ) : (
                                   <LiveKitScreenShare />
                               )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                           </Card>
                      )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                      {effectiveViewMode === 'speaker' && mainParticipant && (
                           <div className="flex-1 flex p-2 -m-2">
                               {renderParticipant(mainParticipant, true)}
                           </div>
                      )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                  </div>
 
                  {/* Sidebar Participants */}
@@ -890,12 +944,18 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                                {!isSelf && (
                                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-tight ml-1">{msg.name}</span>
                                )}
+
+             {!hasCam && (
+                <div className="z-10 relative">
                                <div className={cn(
                                    "px-4 py-2.5 rounded-2xl text-[13.5px] leading-relaxed max-w-[90%] shadow-md wrap-break-word whitespace-pre-wrap",
                                    isSelf
                                        ? "bg-indigo-600 text-white rounded-br-none shadow-indigo-500/20"
                                        : "bg-secondary/80 dark:bg-zinc-800/90 text-foreground dark:text-zinc-100 rounded-bl-none border border-border/50 shadow-black/5 dark:shadow-black/30"
-                               )}>
+                               )}
+
+             {!hasCam && (
+                <div className="z-10 relative">>
                                    {msg.text}
                                </div>
                                <span className="text-[9px] text-muted-foreground px-1 mt-0.5 font-bold uppercase font-mono tracking-tighter">{msg.time}</span>
@@ -1092,8 +1152,6 @@ function LiveKitScreenShare() {
 
   return <VideoTrack trackRef={trackRef} className="w-full h-full object-contain absolute inset-0 z-10 bg-black" />;
 }
-
-
 
 
 

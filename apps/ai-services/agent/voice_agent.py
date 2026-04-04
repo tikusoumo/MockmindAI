@@ -32,6 +32,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from .settings import settings
 from .session_collector import SessionCollector
+from .rag.vector_store import get_vector_store
 
 logger = logging.getLogger("voice-agent")
 
@@ -144,6 +145,29 @@ class InterviewCoach(Agent):
         
         return f"Based on your answer: {suggestion}. You scored {score}/10 on this question."
 
+    @function_tool()
+    async def request_document_context(
+        self,
+        context: RunContext,
+        query: str,
+    ) -> str:
+        """Get contextual information from the candidate's uploaded resume or provided job documentation.
+        
+        Args:
+            query: The specific topic or detail you need to find in their document (e.g., 'Python experience', 'education').
+        """
+        if not self.template_id:
+            return "No document context is available in this session."
+        
+        store = get_vector_store()
+        try:
+            results = await store.query_for_interview(self.template_id, query)
+            if not results:
+                return "I couldn't find any relevant information about that in the uploaded documents."
+            return "\n\n".join(results)
+        except Exception as e:
+            logger.error(f"Failed to query RAG: {e}")
+            return "Failed to retrieve document context at this moment."
 
 server = AgentServer()
 
@@ -266,9 +290,11 @@ async def voice_agent(ctx: JobContext):
         stt=stt,
         llm=llm,
         tts=tts,
-        turn_detection=MultilingualModel(),
+        turn_detection=MultilingualModel(
+            detect_endpointing_duration=1.5 # Wait a bit longer before interrupting the person/assistant
+        ),
         vad=ctx.proc.userdata["vad"],
-        preemptive_generation=True,
+        preemptive_generation=False, # Disable to prevent premature "speaking" UI state while LLM generates
     )
 
     # Create mode-aware agent

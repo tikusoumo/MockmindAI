@@ -220,18 +220,30 @@ export class DataService {
     }
   }
 
-  async updateUser(userId: number, data: typeof defaultUser) {
+  async updateUser(userId: number, data: any) {
     try {
       return await this.prisma.user.update({
         where: { id: userId },
         data: {
           name: data.name,
           avatar: data.avatar,
-        }
+          role: data.role,
+          level: data.level,
+          email: data.email,
+        },
       });
     } catch {
       this.userData = { ...this.userData, ...data };
       return this.userData;
+    }
+  }
+
+  async deleteUser(userId: number) {
+    try {
+      await this.prisma.user.delete({ where: { id: userId } });
+    } catch (error) {
+      console.error('Failed to delete user:', error);
+      throw error;
     }
   }
 
@@ -241,6 +253,55 @@ export class DataService {
       return templates.length > 0 ? templates : defaultInterviewTemplates;
     } catch {
       return defaultInterviewTemplates;
+    }
+  }
+
+  async createInterviewTemplate(data: any) {
+    try {
+      return await this.prisma.interviewTemplate.create({
+        data: {
+          id: data.id || undefined,
+          title: data.title,
+          description: data.description || '',
+          duration: data.duration || '45 min',
+          difficulty: data.difficulty || 'Medium',
+          icon: data.icon || 'Brain',
+          color: data.color || 'bg-blue-500',
+          type: data.type || 'Custom',
+        },
+      });
+    } catch (error) {
+      console.error('Failed to create template in DB:', error);
+      // Return the data as-is for graceful degradation
+      return { ...data, id: data.id || `tpl-${Date.now()}` };
+    }
+  }
+
+  async updateInterviewTemplate(id: string, data: any) {
+    try {
+      return await this.prisma.interviewTemplate.update({
+        where: { id },
+        data: {
+          title: data.title,
+          description: data.description,
+          duration: data.duration,
+          difficulty: data.difficulty,
+          icon: data.icon,
+          color: data.color,
+          type: data.type,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to update template in DB:', error);
+      return { id, ...data };
+    }
+  }
+
+  async deleteInterviewTemplate(id: string) {
+    try {
+      await this.prisma.interviewTemplate.delete({ where: { id } });
+    } catch (error) {
+      console.error('Failed to delete template in DB:', error);
     }
   }
 

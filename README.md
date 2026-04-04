@@ -26,7 +26,6 @@ MockMind is an intelligent mock interview platform that simulates real interview
 - [Environment Variables](#environment-variables)
 - [Running in Development](#running-in-development)
 - [Running with Docker](#running-with-docker)
-- [Running with Vagrant (Recommended for Windows)](#running-with-vagrant-recommended-for-windows)
 - [API Reference](#api-reference)
 - [Roadmap](#roadmap)
 - [B2B Product — HireMind](#b2b-product--hiremind)
@@ -347,8 +346,7 @@ MockMind/
 ├── docker-compose.yml         # Standard stack
 ├── docker-compose.gpu.yml     # GPU-accelerated variant
 ├── docker-compose.cloud.yml   # Cloud deployment variant
-├── turbo.json                 # Turborepo pipeline config
-└── Vagrantfile                # Linux VM for Windows developers
+└── turbo.json                 # Turborepo pipeline config
 ```
 
 ---
@@ -398,7 +396,6 @@ MockMind/
 |-----------|---------|
 | Docker + Docker Compose | Containerised local development |
 | Turborepo | Monorepo build orchestration |
-| Vagrant + VirtualBox | Linux VM for Windows-host developers |
 | Bun | Fast JavaScript package manager |
 
 ---
@@ -527,31 +524,6 @@ Services after startup:
 
 ---
 
-## Running with Vagrant (Recommended for Windows)
-
-Vagrant boots a fully configured Ubuntu VM with Docker pre-installed — no WSL2 or manual Linux setup required.
-
-**Install prerequisites on your Windows host:**
-- [Vagrant](https://www.vagrantup.com/downloads)
-- [VirtualBox](https://www.virtualbox.org/wiki/Downloads)
-
-```powershell
-# 1. Boot the VM (first run takes ~5 minutes)
-vagrant up
-
-# 2. SSH into the VM
-vagrant ssh
-
-# 3. Navigate to the project and start the stack
-cd /vagrant
-docker compose up --build
-```
-
-Open from your Windows browser: **http://localhost:3000**  
-The Vagrantfile forwards all relevant ports to your Windows host automatically.
-
----
-
 ## API Reference
 
 The FastAPI AI Services expose an interactive Swagger UI at **http://localhost:8000/docs**.
@@ -645,31 +617,6 @@ Please read [AGENTS.md](./AGENTS.md) for agent-specific development guidelines, 
 
 </div>
 
-## Quick Start (Vagrant VM)
-
-1. **Start the VM:**
-   ```sh
-   vagrant up
-   ```
-
-2. **Configure LiveKit & Google API:**
-   - Edit `.env` in the project root
-   - Add your `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
-   - Add your `GOOGLE_API_KEY` (already configured)
-
-3. **Run the stack:**
-   ```sh
-   vagrant ssh
-   cd /vagrant
-   docker compose up --build
-   ```
-
-4. **Access the services:**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8000/docs
-   - pgAdmin: http://localhost:5050
-   - Agent Worker: Runs automatically in background
-
 ## Architecture
 
 The project includes:
@@ -711,53 +658,6 @@ Automatically connects to LiveKit rooms and provides:
    - Vertex AI API (for Gemini)
 3. Create an API key in "Credentials"
 4. Add to `.env` as `GOOGLE_API_KEY`
-
-## Vagrant Setup
-
-Start Linux VM: vagrant up
-Run stack inside VM: ```vagrant ssh``` then cd ```/vagrant && docker compose up --build```
-Open on your Windows host browser: http://localhost:3000 (camera access uses your host browser/device)
-
-## Run the whole app on Linux (Vagrant)
-
-This repo includes a `Vagrantfile` that boots an Ubuntu VM and installs Docker + Compose.
-
-1) Install prerequisites on your host:
-- Vagrant
-- VirtualBox
-
-2) Boot the VM:
-
-```sh
-vagrant up
-```
-
-3) Run the full stack inside the VM:
-
-```sh
-vagrant ssh
-cd /vagrant
-docker compose up --build
-```
-
-4) Open from your host browser:
-- Frontend: http://localhost:3000
-- Backend: http://localhost:8000/docs
-- pgAdmin: http://localhost:5050
-
-If any of those ports are already in use on your host, run `vagrant port` to see the auto-corrected host port mappings.
-
-### Public vs private forwarded ports
-
-By default:
-- **Public (LAN)**: `3000` (frontend), `8000` (backend) bind to `0.0.0.0`
-- **Private (localhost-only)**: `5050` (pgAdmin), `5432` (Postgres) bind to `127.0.0.1`
-
-You can override the bind IPs:
-
-```sh
-PUBLIC_HOST_IP=127.0.0.1 vagrant up
-```
 
 This Turborepo starter is maintained by the Turborepo core team.
 

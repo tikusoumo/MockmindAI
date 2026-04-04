@@ -20,7 +20,7 @@ coverage
 
 # Vercel
 .vercel
-
+/inference/llama/models
 # Build Outputs
 .next/
 out/

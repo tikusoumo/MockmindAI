@@ -1,4 +1,21 @@
 services:
+  # Redis Queue for Egress
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # Local LiveKit Egress (Burns room audio/video to local file system)
+  egress:
+    image: livekit/egress:latest
+    environment:
+      - EGRESS_CONFIG_FILE=/out/egress.yaml
+    volumes:
+      - ./apps/api/public/recordings:/out
+    depends_on:
+      - livekit
+      - redis
+
   kokoro:
     build:
       context: ./inference/kokoro

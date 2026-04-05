@@ -18,6 +18,7 @@ const interviewTemplates = [
     icon: "Code",
     color: "bg-blue-500/10 text-blue-500",
     type: "Technical",
+    isSystem: true,
   },
   {
     id: "aptitude-round",
@@ -28,6 +29,7 @@ const interviewTemplates = [
     icon: "Brain",
     color: "bg-purple-500/10 text-purple-500",
     type: "Aptitude",
+    isSystem: true,
   },
   {
     id: "hr-round",
@@ -38,6 +40,7 @@ const interviewTemplates = [
     icon: "Users",
     color: "bg-green-500/10 text-green-500",
     type: "Behavioral",
+    isSystem: true,
   },
   {
     id: "system-design",
@@ -48,6 +51,7 @@ const interviewTemplates = [
     icon: "Server",
     color: "bg-orange-500/10 text-orange-500",
     type: "Technical",
+    isSystem: true,
   },
   {
     id: "manager-behavioral",
@@ -58,6 +62,7 @@ const interviewTemplates = [
     icon: "Briefcase",
     color: "bg-pink-500/10 text-pink-500",
     type: "Behavioral",
+    isSystem: true,
   }
 ];
 

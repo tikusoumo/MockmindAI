@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Play, Sparkles, Code, Brain, Users, Zap, Target, Trophy, Edit2 } from "lucide-react";
+import { Play, Sparkles, Code, Brain, Users, Zap, Target, Trophy, Edit2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { InterviewTemplate } from "@/data/mockData";
 import { CustomSessionForm } from "./CustomSessionForm";
@@ -33,6 +33,7 @@ export function NewSessionModal({ children, templates, defaultTab = "templates",
   const [activeTab, setActiveTab] = React.useState(defaultTab);
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | null>(defaultSelectedTemplateId ?? null);
   const [editingTemplate, setEditingTemplate] = React.useState<InterviewTemplate | null>(null);
+  const [isStarting, setIsStarting] = React.useState(false);
 
   // All templates come from backend (passed as props) — no localStorage merge needed
   const allTemplates = templates;
@@ -44,6 +45,7 @@ export function NewSessionModal({ children, templates, defaultTab = "templates",
       setActiveTab(defaultSelectedTemplateId ? "templates" : defaultTab);
       setSelectedTemplateId(defaultSelectedTemplateId ?? null);
       setEditingTemplate(null);
+      setIsStarting(false);
     }
   }, [open, defaultTab, defaultSelectedTemplateId]);
 
@@ -51,6 +53,7 @@ const handleStartFromTemplate = async () => {
     if (selectedTemplateId) {
       const template = allTemplates.find(t => t.id === selectedTemplateId);
       if (template) {
+        setIsStarting(true);
         try {
           const data = {
             title: template.title,
@@ -66,14 +69,17 @@ const handleStartFromTemplate = async () => {
           return;
         } catch (e) {
           console.error("Failed to start session from template", e);
+          setIsStarting(false);
         }
       }
+      setIsStarting(true);
       router.push(`/interview?template=${selectedTemplateId}&mode=strict`);
       setOpen(false);
     }
   };
 
   const handleStartCustom = async (data: any) => {
+    setIsStarting(true);
     try {
       // POST the fully populated form data, including multiple participants/invites
       const response = await backendPost<{id: string}>("/api/sessions", data);
@@ -115,6 +121,10 @@ const handleStartFromTemplate = async () => {
       });
       router.push(`/interview?${params.toString()}`);
       setOpen(false);
+    } finally {
+      // In successful route transitions this state is short-lived, but this
+      // keeps the modal responsive if navigation is blocked.
+      setIsStarting(false);
     }
   };
 
@@ -136,6 +146,14 @@ const handleStartFromTemplate = async () => {
         {children}
       </DialogTrigger>
       <DialogContent className="sm:max-w-[700px] h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+        {isStarting && (
+          <div className="absolute inset-0 z-50 bg-background/75 backdrop-blur-sm flex items-center justify-center">
+            <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-lg">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="text-sm font-medium">Starting session...</span>
+            </div>
+          </div>
+        )}
         <DialogHeader className="p-6 pb-2 shrink-0">
           <DialogTitle>Start New Session</DialogTitle>
           <DialogDescription>
@@ -218,8 +236,17 @@ const handleStartFromTemplate = async () => {
                         <span className="font-medium text-foreground">{selectedTemplate.title}</span> selected
                      </div>
                   ) : <div></div>}
-                  <Button onClick={handleStartFromTemplate} disabled={!selectedTemplateId} className="w-36 gap-2">
-                     <Play className="h-4 w-4" /> Start Session
+                  <Button onClick={handleStartFromTemplate} disabled={!selectedTemplateId || isStarting} className="w-36 gap-2">
+                     {isStarting ? (
+                       <>
+                         <Loader2 className="h-4 w-4 animate-spin" />
+                         Starting...
+                       </>
+                     ) : (
+                       <>
+                         <Play className="h-4 w-4" /> Start Session
+                       </>
+                     )}
                   </Button>
                </div>
             </DialogFooter>

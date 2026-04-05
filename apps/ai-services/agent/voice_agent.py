@@ -14,25 +14,43 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
+import io
+import wave
+import uuid
 from typing import Any
+import importlib
+
+import requests
 
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
+    APIConnectOptions,
+    DEFAULT_API_CONNECT_OPTIONS,
     JobContext,
     JobProcess,
     cli,
     function_tool,
     RunContext,
 )
-from livekit.plugins import silero, openai, deepgram, google, groq, elevenlabs
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.agents import tts as lk_tts
+from livekit.plugins import silero, openai
 
 from .settings import settings
 from .session_collector import SessionCollector
-from .rag.vector_store import get_vector_store
+try:
+    from .rag.vector_store import get_vector_store
+except Exception:
+    class _FallbackVectorStore:
+        async def query_for_interview(self, interview_id: str, query: str):
+            return []
+
+    def get_vector_store():
+        logger.warning("RAG module unavailable. Using fallback empty vector store.")
+        return _FallbackVectorStore()
 
 logger = logging.getLogger("voice-agent")
 
@@ -79,6 +97,7 @@ class InterviewCoach(Agent):
         
         self.mode = mode
         self.template_id = template_id
+        self.session_id = None
         self.template_title = template_title
         self.collector = collector
         self.current_question_idx = 0
@@ -156,20 +175,42 @@ class InterviewCoach(Agent):
         Args:
             query: The specific topic or detail you need to find in their document (e.g., 'Python experience', 'education').
         """
-        if not self.template_id:
+        if not self.template_id and not self.session_id:
             return "No document context is available in this session."
-        
+
         store = get_vector_store()
         try:
-            results = await store.query_for_interview(self.template_id, query)
-            if not results:
+            all_results = []
+            
+            if self.session_id:
+                try:
+                    session_results = await store.query_for_interview(f"session_{self.session_id}", query)
+                    if session_results:
+                        all_results.extend(session_results)
+                except Exception as e:
+                    logger.error(f"Failed to query session documents: {e}")
+                    
+            if self.template_id:
+                try:
+                    template_results = await store.query_for_interview(self.template_id, query)
+                    if template_results:
+                        all_results.extend(template_results)
+                except Exception as e:
+                    logger.error(f"Failed to query template documents: {e}")
+
+            if not all_results:
                 return "I couldn't find any relevant information about that in the uploaded documents."
-            return "\n\n".join(results)
+            return "\n\n".join(all_results)
         except Exception as e:
             logger.error(f"Failed to query RAG: {e}")
             return "Failed to retrieve document context at this moment."
 
-server = AgentServer()
+server = AgentServer(
+    num_idle_processes=settings.livekit_num_idle_processes,
+    initialize_process_timeout=settings.livekit_initialize_process_timeout,
+    job_memory_warn_mb=settings.livekit_job_memory_warn_mb,
+    job_memory_limit_mb=settings.livekit_job_memory_limit_mb,
+)
 
 
 def prewarm(proc: JobProcess):
@@ -181,55 +222,212 @@ def prewarm(proc: JobProcess):
 server.setup_fnc = prewarm
 
 
+class _KokoroChunkedStream(lk_tts.ChunkedStream):
+    def __init__(
+        self,
+        *,
+        tts: "LocalKokoroTTS",
+        input_text: str,
+        conn_options: APIConnectOptions,
+    ) -> None:
+        super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
+        self._kokoro_tts = tts
+
+    async def _run(self, output_emitter: lk_tts.AudioEmitter) -> None:
+        text = self.input_text.strip()
+        if not text:
+            return
+
+        payload = {
+            "model": self._kokoro_tts.model,
+            "input": text,
+            "voice": self._kokoro_tts.voice,
+            "response_format": "wav",
+        }
+
+        # Use a thread to avoid blocking the event loop on HTTP I/O.
+        response = await asyncio.to_thread(
+            requests.post,
+            f"{self._kokoro_tts.base_url}/audio/speech",
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+
+        with io.BytesIO(response.content) as wav_io:
+            with wave.open(wav_io, "rb") as wav_file:
+                sample_rate = wav_file.getframerate()
+                num_channels = wav_file.getnchannels()
+                pcm_bytes = wav_file.readframes(wav_file.getnframes())
+
+        output_emitter.initialize(
+            request_id=f"kokoro-{uuid.uuid4().hex[:8]}",
+            sample_rate=sample_rate,
+            num_channels=num_channels,
+            mime_type="audio/pcm",
+        )
+        output_emitter.push(pcm_bytes)
+
+
+class LocalKokoroTTS(lk_tts.TTS):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str = "kokoro",
+        voice: str = "af_sky",
+        sample_rate: int = 24000,
+        num_channels: int = 1,
+    ) -> None:
+        super().__init__(
+            capabilities=lk_tts.TTSCapabilities(streaming=False),
+            sample_rate=sample_rate,
+            num_channels=num_channels,
+        )
+        self.base_url = base_url.rstrip("/")
+        self._model = model
+        self.voice = voice
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def provider(self) -> str:
+        return "kokoro-local"
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+    ) -> lk_tts.ChunkedStream:
+        return _KokoroChunkedStream(tts=self, input_text=text, conn_options=conn_options)
+
+    async def aclose(self) -> None:
+        return
+
+
 def create_model_components(settings):
     """Factory to create LLM, STT, and TTS instances with support for mixing local and online providers."""
+    def s(name: str, default=None):
+        return getattr(settings, name, default)
+
+    stt_provider = s("stt_provider", "openai")
+    llm_provider = s("llm_provider", "openai")
+    tts_provider = s("tts_provider", "openai")
+    use_local_ai = s("use_local_ai", True)
+
+    whisper_base_url = s("whisper_base_url", "http://whisper:80/v1")
+    llama_base_url = s("llama_base_url", "http://llama_cpp:11434/v1")
+    llama_model = s("llama_model", "qwen3-4b")
+    kokoro_base_url = s("kokoro_base_url", "http://kokoro:8880/v1")
+
+    google_api_key = s("google_api_key")
+    google_credentials_file = s("google_credentials_file")
+    groq_api_key = s("groq_api_key")
+    deepgram_api_key = s("deepgram_api_key")
+    eleven_api_key = s("eleven_api_key")
+
+    def is_local_target(base_url: str | None, host_hint: str) -> bool:
+        return bool(use_local_ai or (base_url and ("localhost" in base_url or host_hint in base_url)))
+
+    def openai_stt_fallback():
+        if is_local_target(whisper_base_url, "whisper"):
+            return openai.STT(
+                base_url=whisper_base_url,
+                model="Systran/faster-whisper-small",
+                api_key="no-key-needed",
+            )
+        return openai.STT(model="whisper-1")
+
+    def openai_llm_fallback():
+        if is_local_target(llama_base_url, "llama"):
+            return openai.LLM(base_url=llama_base_url, model=llama_model, api_key="no-key-needed")
+        return openai.LLM(model="gpt-4o")
+
+    def openai_tts_fallback():
+        if is_local_target(kokoro_base_url, "kokoro"):
+            return LocalKokoroTTS(base_url=kokoro_base_url, model="kokoro", voice="af_sky")
+        return openai.TTS(model="tts-1", voice="alloy")
+
+    def load_optional_plugin(module_name: str):
+        try:
+            return importlib.import_module(module_name)
+        except Exception:
+            logger.warning(f"Optional LiveKit plugin unavailable: {module_name}. Falling back.")
+            return None
+
+    google = load_optional_plugin("livekit.plugins.google")
+    deepgram = load_optional_plugin("livekit.plugins.deepgram")
+    groq = load_optional_plugin("livekit.plugins.groq")
+    elevenlabs = load_optional_plugin("livekit.plugins.elevenlabs")
     
     # --- STT ---
-    if settings.stt_provider == "deepgram":
-        stt = deepgram.STT(api_key=settings.deepgram_api_key)
-    elif settings.stt_provider == "google":
-        # Google STT requires service account for gRPC; pass file if we have it
-        stt = google.STT(credentials_file=settings.google_credentials_file) if settings.google_credentials_file else google.STT()
-    elif settings.stt_provider == "groq":
-        stt = groq.STT(api_key=settings.groq_api_key)
-    elif settings.stt_provider == "openai":
-        # Check if local or real OpenAI
-        if settings.use_local_ai or (settings.whisper_base_url and ("localhost" in settings.whisper_base_url or "whisper" in settings.whisper_base_url)):
-            stt = openai.STT(base_url=settings.whisper_base_url, model="Systran/faster-whisper-small", api_key="no-key-needed")
+    if stt_provider == "deepgram" and deepgram:
+        stt = deepgram.STT(api_key=deepgram_api_key)
+    elif stt_provider == "google" and google:
+        # Google STT requires service-account credentials for gRPC.
+        if google_credentials_file:
+            stt = google.STT(credentials_file=google_credentials_file)
         else:
-            stt = openai.STT(model="whisper-1")
+            logger.warning(
+                "Google STT selected but GOOGLE_CREDENTIALS_FILE is missing. Falling back to OpenAI-compatible STT."
+            )
+            stt = openai_stt_fallback()
+    elif stt_provider == "groq" and groq:
+        stt = groq.STT(api_key=groq_api_key)
+    elif stt_provider == "openai":
+        stt = openai_stt_fallback()
     else: # Default
-        stt = google.STT() if settings.google_api_key or settings.google_credentials_file else openai.STT()
+        stt = (
+            google.STT(credentials_file=google_credentials_file)
+            if (google and google_credentials_file)
+            else openai_stt_fallback()
+        )
 
     # --- LLM ---
-    if settings.llm_provider == "google":
-        # Gemini LLM supports direct API Key
-        llm = google.LLM(model="gemini-2.0-flash-exp", api_key=settings.google_api_key)
-    elif settings.llm_provider == "groq":
-        llm = groq.LLM(model="llama3-8b-8192", api_key=settings.groq_api_key)
-    elif settings.llm_provider == "openai":
-        if settings.use_local_ai or (settings.llama_base_url and ("localhost" in settings.llama_base_url or "llama" in settings.llama_base_url)):
-             llm = openai.LLM(base_url=settings.llama_base_url, model=settings.llama_model, api_key="no-key-needed")
+    if llm_provider == "google" and google:
+        if google_api_key:
+            llm = google.LLM(model="gemini-2.0-flash-exp", api_key=google_api_key)
         else:
-             llm = openai.LLM(model="gpt-4o")
+            logger.warning(
+                "Google LLM selected but GOOGLE_API_KEY is missing. Falling back to OpenAI-compatible LLM."
+            )
+            llm = openai_llm_fallback()
+    elif llm_provider == "groq" and groq:
+        llm = groq.LLM(model="llama3-8b-8192", api_key=groq_api_key)
+    elif llm_provider == "openai":
+        llm = openai_llm_fallback()
     else:
-        llm = google.LLM(model="gemini-2.0-flash-exp", api_key=settings.google_api_key)
+        llm = (
+            google.LLM(model="gemini-2.0-flash-exp", api_key=google_api_key)
+            if (google and google_api_key)
+            else openai_llm_fallback()
+        )
 
     # --- TTS ---
-    if settings.tts_provider == "elevenlabs":
-        tts = elevenlabs.TTS(api_key=settings.eleven_api_key)
-    elif settings.tts_provider == "deepgram":
-        tts = deepgram.TTS(api_key=settings.deepgram_api_key)
-    elif settings.tts_provider == "google":
-        # Google TTS also requires service account for gRPC
-        tts = google.TTS(credentials_file=settings.google_credentials_file) if settings.google_credentials_file else google.TTS()
-    elif settings.tts_provider == "openai":
-         if settings.use_local_ai or (settings.kokoro_base_url and ("localhost" in settings.kokoro_base_url or "kokoro" in settings.kokoro_base_url)):
-             tts = openai.TTS(base_url=settings.kokoro_base_url, model="kokoro", voice="af_sky", api_key="no-key-needed")
-         else:
-             tts = openai.TTS(model="tts-1", voice="alloy")
+    if tts_provider == "elevenlabs" and elevenlabs:
+        tts = elevenlabs.TTS(api_key=eleven_api_key)
+    elif tts_provider == "deepgram" and deepgram:
+        tts = deepgram.TTS(api_key=deepgram_api_key)
+    elif tts_provider == "google" and google:
+        # Google TTS also requires service-account credentials for gRPC.
+        if google_credentials_file:
+            tts = google.TTS(credentials_file=google_credentials_file)
+        else:
+            logger.warning(
+                "Google TTS selected but GOOGLE_CREDENTIALS_FILE is missing. Falling back to OpenAI-compatible TTS."
+            )
+            tts = openai_tts_fallback()
+    elif tts_provider == "openai":
+         tts = openai_tts_fallback()
     else:
-        tts = google.TTS()
+        tts = (
+            google.TTS(credentials_file=google_credentials_file)
+            if (google and google_credentials_file)
+            else openai_tts_fallback()
+        )
 
     return stt, llm, tts
 
@@ -268,9 +466,12 @@ async def voice_agent(ctx: JobContext):
     
     mode = metadata.get("mode", "strict")
     template_id = metadata.get("templateId")
+    session_id = metadata.get("sessionId")
+    if not session_id and ctx.room.name.startswith("interview-"):
+        session_id = ctx.room.name.replace("interview-", "", 1)
     template_title = metadata.get("templateTitle", "Interview")
     participant_name = metadata.get("participantName", "Candidate")
-    
+
     logger.info(f"Interview mode: {mode}, template: {template_title}")
 
     # Initialize session collector
@@ -282,7 +483,11 @@ async def voice_agent(ctx: JobContext):
         participant_name=participant_name,
     )
 
-    logger.info(f"Using Providers -> LLM: {settings.llm_provider}, STT: {settings.stt_provider}, TTS: {settings.tts_provider}")
+    logger.info(
+        f"Using Providers -> LLM: {getattr(settings, 'llm_provider', 'openai')}, "
+        f"STT: {getattr(settings, 'stt_provider', 'openai')}, "
+        f"TTS: {getattr(settings, 'tts_provider', 'openai')}"
+    )
 
     stt, llm, tts = create_model_components(settings)
 
@@ -290,10 +495,9 @@ async def voice_agent(ctx: JobContext):
         stt=stt,
         llm=llm,
         tts=tts,
-        turn_detection=MultilingualModel(
-            detect_endpointing_duration=1.5 # Wait a bit longer before interrupting the person/assistant
-        ),
         vad=ctx.proc.userdata["vad"],
+        # Keep endpointing lightweight in containerized deployments where
+        # turn-detector model assets may not be present.
         preemptive_generation=False, # Disable to prevent premature "speaking" UI state while LLM generates
     )
 
@@ -305,10 +509,81 @@ async def voice_agent(ctx: JobContext):
         collector=collector,
     )
 
+    agent.session_id = session_id
+
+    @session.on("user_input_transcribed")
+    def on_transcribed(ev):
+        if getattr(ev, "is_final", False) and ev.transcript:
+            collector.add_candidate_message(ev.transcript)
+            logger.info(f"Recorded candidate: {ev.transcript}")
+
+    @session.on("conversation_item_added")
+    def on_chat_added(ev):
+        msg = ev.item
+        if getattr(msg, "role", "") == "assistant":
+            text_val = msg.content if isinstance(msg.content, str) else "".join([getattr(m, "text", "") for m in (msg.content or []) if getattr(m, "type", "") == "text"])
+            if text_val:
+                is_q = "?" in text_val
+                collector.add_interviewer_message(text_val, is_question=is_q)
+                logger.info(f"Recorded interviewer: {text_val}")
+
     await session.start(
+
         agent=agent,
         room=ctx.room,
     )
+
+    finalization_started = False
+
+    async def push_session_to_background(trigger: str) -> None:
+        nonlocal finalization_started
+
+        if finalization_started:
+            logger.debug(f"Session finalization already started, skipping trigger={trigger}")
+            return
+
+        finalization_started = True
+        logger.info(f"Finalizing session via trigger={trigger}")
+
+        session_data = collector.end_session()
+        resolved_session_id = session_id or agent.session_id or ctx.room.name
+
+        import aiohttp
+
+        api_url = "http://agent-api:8001/reports/process"
+        payload = {
+            "session_id": resolved_session_id,
+            "session_data": session_data.to_dict(),
+        }
+
+        timeout = aiohttp.ClientTimeout(total=8)
+        max_attempts = 3
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as http_session:
+                    async with http_session.post(api_url, json=payload) as response:
+                        if response.status >= 400:
+                            error_text = await response.text()
+                            raise RuntimeError(f"{response.status} - {error_text}")
+
+                        logger.info(
+                            f"Session data pushed to background processor: status={response.status}, "
+                            f"session_id={resolved_session_id}"
+                        )
+                        return
+            except Exception as e:
+                if attempt >= max_attempts:
+                    logger.error(
+                        f"Failed to push session to background after {max_attempts} attempts: {e}"
+                    )
+                    return
+
+                backoff = 0.5 * attempt
+                logger.warning(
+                    f"Push attempt {attempt}/{max_attempts} failed, retrying in {backoff:.1f}s: {e}"
+                )
+                await asyncio.sleep(backoff)
 
     @ctx.room.on("data_received")
     def on_data_received(data_packet):
@@ -320,52 +595,20 @@ async def voice_agent(ctx: JobContext):
         except Exception as e:
             logger.error(f"Error parsing data channel message: {e}")
 
-    @ctx.room.on("disconnected")
-    def on_disconnected(*args):
-        logger.info("Room disconnected, generating final report via webhook...")
-        session_data = collector.end_session()
-        
-        # Store it locally just in case
-        try:
-            from .routers.reports import store_session
-            store_session(session_data)
-        except ImportError:
-            pass
-            
-        import asyncio
-        import urllib.request
-        
-        async def push_webhook():
-            try:
-                from .analysis import ReportGenerator
-                generator = ReportGenerator()
-                report = generator.generate(session_data)
-                payload = report.to_dict()
-                
-                # Use standard library to avoid missing httpx/aiohttp in worker
-                api_url = "http://api:8000/api/reports/webhook"
-                req = urllib.request.Request(
-                    api_url,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST"
-                )
-                
-                # Run in thread so it doesn't block
-                loop = asyncio.get_event_loop()
-                def make_req():
-                    with urllib.request.urlopen(req, timeout=30) as response:
-                        return response.status
-                
-                status = await loop.run_in_executor(None, make_req)
-                logger.info(f"Webhook pushed successfully: {status}")
-            except Exception as e:
-                logger.error(f"Failed to push webhook: {e}")
-                
-        # Fire and forget
-        asyncio.create_task(push_webhook())
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(participant):
+        identity = getattr(participant, "identity", "unknown")
+        logger.info(
+            f"Participant {identity} disconnected. Scheduling background finalization push."
+        )
+        asyncio.create_task(
+            push_session_to_background(f"participant_disconnected:{identity}")
+        )
 
-    logger.info(f"Connected to room: {ctx.room.name} in {mode} mode")
+    @ctx.room.on("disconnected")
+    def on_room_disconnected(*_args):
+        logger.info("Room disconnected. Scheduling background finalization push.")
+        asyncio.create_task(push_session_to_background("room_disconnected"))
 
 
 if __name__ == "__main__":

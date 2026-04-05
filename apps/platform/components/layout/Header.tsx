@@ -15,12 +15,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ModeToggle } from "@/components/mode-toggle";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { User } from "@/data/mockData";
-import { useBackendData } from "@/lib/backend";
+import { useBackendDataState } from "@/lib/backend";
 import { fallbackCurrentUser } from "@/lib/fallback-data";
 
 export function Header() {
-  const user = useBackendData<User>("/api/user", fallbackCurrentUser);
+  const { data: user, isLoading } = useBackendDataState<User>("/api/user", fallbackCurrentUser);
 
   return (
     <header className="flex h-16 items-center gap-4 border-b bg-background px-6">
@@ -44,19 +45,32 @@ export function Header() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-              <Avatar className="h-8 w-8">
-                <AvatarImage src={user.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.name}`} alt={user.name} />
-                <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
-              </Avatar>
+              {isLoading ? (
+                <Skeleton className="h-8 w-8 rounded-full" />
+              ) : (
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={user.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.name}`} alt={user.name} />
+                  <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
+                </Avatar>
+              )}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56" align="end" forceMount>
             <DropdownMenuLabel className="font-normal">
               <div className="flex flex-col space-y-1">
-                <p className="text-sm font-medium leading-none">{user.name}</p>
-                <p className="text-xs leading-none text-muted-foreground">
-                  {user.role}
-                </p>
+                {isLoading ? (
+                  <>
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-3 w-16" />
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium leading-none">{user.name}</p>
+                    <p className="text-xs leading-none text-muted-foreground">
+                      {user.role}
+                    </p>
+                  </>
+                )}
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />

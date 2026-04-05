@@ -364,14 +364,44 @@ export class DataService {
     }
   }
 
-  async getPastInterviews() {
+  async getPastInterviews(userId?: number, userEmail?: string) {
     try {
-      const interviews = await this.prisma.interviewSession.findMany({
-          orderBy: { createdAt: 'desc' }
+      const filters: any[] = [];
+      if (userId) {
+        filters.push({ session: { userId: Number(userId) } });
+      }
+      if (userEmail) {
+        filters.push({
+          session: {
+            participants: {
+              some: {
+                email: userEmail,
+              },
+            },
+          },
+        });
+      }
+      const condition = filters.length > 0 ? { OR: filters } : {};
+      const reports = await this.prisma.report.findMany({
+          where: condition,
+          orderBy: { date: 'desc' },
+          include: { 
+              session: {
+                  include: { template: true }
+              } 
+          }
       });
-      return interviews.length > 0 ? interviews : defaultPastInterviews;
-    } catch {
-      return defaultPastInterviews;
+      return reports.map(r => ({
+          id: r.id,
+          title: r.session?.title || r.session?.template?.title || "Interview Session",
+          date: r.date.toISOString(),
+          duration: r.duration || "45:00",
+          type: r.session?.template?.type || "Technical",
+          score: r.overallScore || 0
+      }));
+    } catch (e) {
+      console.error("Error fetching past interviews:", e);
+      return [];
     }
   }
 

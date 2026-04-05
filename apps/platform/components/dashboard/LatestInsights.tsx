@@ -4,11 +4,44 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, Mic, Timer, TrendingUp } from "lucide-react";
 import type { ReportData } from "@/data/mockData";
-import { useBackendData } from "@/lib/backend";
+import { useBackendDataState } from "@/lib/backend";
 import { fallbackReport } from "@/lib/fallback-data";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function LatestInsights() {
-  const latest = useBackendData<ReportData>("/api/report/latest", fallbackReport);
+  const { data: latest, isLoading } = useBackendDataState<ReportData>(
+    "/api/reports/latest",
+    fallbackReport,
+  );
+
+  const fillerWords = Array.isArray(latest.fillerWordsAnalysis)
+    ? [...latest.fillerWordsAnalysis]
+        .filter((item) => Number.isFinite(item.count) && item.count > 0)
+        .sort((a, b) => b.count - a.count)
+    : [];
+  const totalFillerCount = fillerWords.reduce((sum, item) => sum + item.count, 0);
+  const topFillerWord = fillerWords[0];
+
+  const pacePoints = Array.isArray(latest.pacingAnalysis)
+    ? latest.pacingAnalysis.filter((point) => Number.isFinite(point.wpm) && point.wpm > 0)
+    : [];
+  const averageWpm =
+    pacePoints.length > 0
+      ? Math.round(
+          pacePoints.reduce((sum, point) => sum + point.wpm, 0) / pacePoints.length,
+        )
+      : null;
+
+  if (isLoading) {
+    return (
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-28 w-full" />
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -30,9 +63,11 @@ export function LatestInsights() {
           <Timer className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{typeof latest.behavioralAnalysis?.pace === 'object' ? (latest.behavioralAnalysis.pace as any).score : latest.behavioralAnalysis?.pace || 'N/A'}</div>
+          <div className="text-2xl font-bold">
+            {averageWpm !== null ? `${averageWpm} WPM` : latest.behavioralAnalysis?.pace || "N/A"}
+          </div>
           <p className="text-xs text-muted-foreground">
-            Optimal range
+            {averageWpm !== null ? "Average from transcription" : "Pace classification"}
           </p>
         </CardContent>
       </Card>
@@ -42,9 +77,11 @@ export function LatestInsights() {
           <Mic className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{typeof latest.behavioralAnalysis?.fillerWords === 'object' ? (latest.behavioralAnalysis.fillerWords as any).score : latest.behavioralAnalysis?.fillerWords || 'N/A'}</div>
+          <div className="text-2xl font-bold">{totalFillerCount}</div>
           <p className="text-xs text-muted-foreground">
-            Top 10% of users
+            {topFillerWord
+              ? `Top: "${topFillerWord.word}" (${topFillerWord.count})`
+              : "No filler words detected"}
           </p>
         </CardContent>
       </Card>
@@ -54,9 +91,9 @@ export function LatestInsights() {
           <Activity className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{typeof latest.behavioralAnalysis?.clarity === 'object' ? (latest.behavioralAnalysis.clarity as any).score : latest.behavioralAnalysis?.clarity || 'N/A'}</div>
+          <div className="text-2xl font-bold">{latest.behavioralAnalysis?.clarity || "N/A"}</div>
           <p className="text-xs text-muted-foreground">
-            Crystal clear audio
+            From speech analysis
           </p>
         </CardContent>
       </Card>

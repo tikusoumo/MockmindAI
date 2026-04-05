@@ -78,6 +78,36 @@ class SessionData:
             "follow_up_count": self.follow_up_count,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SessionData:
+        """Create from dictionary."""
+        from datetime import datetime
+        metadata_data = data.get("metadata", {})
+        metadata = SessionMetadata(
+            room_name=metadata_data.get("room_name", ""),
+            template_id=metadata_data.get("template_id"),
+            template_title=metadata_data.get("template_title", ""),
+            mode=metadata_data.get("mode", "strict"),
+            started_at=datetime.fromisoformat(metadata_data["started_at"]) if metadata_data.get("started_at") else datetime.now(),
+            ended_at=datetime.fromisoformat(metadata_data["ended_at"]) if metadata_data.get("ended_at") else None,
+            participant_name=metadata_data.get("participant_name", ""),
+        )
+        transcript = []
+        for entry in data.get("transcript", []):
+            transcript.append(TranscriptEntry(
+                speaker=SpeakerRole(entry["speaker"]),
+                text=entry["text"],
+                timestamp=entry["timestamp"],
+                duration=entry.get("duration", 0.0),
+            ))
+        return cls(
+            metadata=metadata,
+            transcript=transcript,
+            scores=data.get("scores", []),
+            question_count=data.get("question_count", 0),
+            follow_up_count=data.get("follow_up_count", 0)
+        )
+
 
 class SessionCollector:
     """Collects data during an interview session.

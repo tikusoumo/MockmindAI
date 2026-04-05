@@ -16,10 +16,11 @@ interface CustomSessionFormProps {
   isAdmin?: boolean;
   onStart: (data: any) => void;
   onSaveTemplate?: (data: any) => void;
+  onDeleteTemplate?: () => void;
   onCancel?: () => void;
 }
 
-export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSaveTemplate, onCancel }: CustomSessionFormProps) {
+export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSaveTemplate, onDeleteTemplate, onCancel }: CustomSessionFormProps) {
   const [topic, setTopic] = React.useState(initialData?.title || "");
   const [description, setDescription] = React.useState(initialData?.description || "");
   const [type, setType] = React.useState<string>(initialData?.type || "Technical");
@@ -400,10 +401,19 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
       </div>
 
       <div className="p-6 pt-4 border-t mt-auto bg-background/95 backdrop-blur-sm z-10 flex items-center justify-between">
-         <div>
+         <div className="flex gap-2">
            {onSaveTemplate && (
              <Button variant="outline" onClick={handleSave} disabled={!isFormValid} className="w-36 gap-2">
                <Save className="h-4 w-4" /> Save Template
+             </Button>
+           )}
+           {onDeleteTemplate && initialData?.id && (
+             <Button variant="destructive" onClick={() => {
+                if(confirm("Are you sure you want to delete this template?")) {
+                  onDeleteTemplate();
+                }
+             }} className="gap-2">
+               <Trash2 className="h-4 w-4" /> Delete
              </Button>
            )}
          </div>

@@ -26,6 +26,7 @@ model User {
   progress      ProgressStat[]
   scheduled     ScheduledSession[]
   studyPlans    StudyPlan[]
+  templates     InterviewTemplate[]
 
   @@map("users")
 }
@@ -45,16 +46,23 @@ model OTP {
 // -------------------------------------------------------------
 
 model InterviewTemplate {
-  id          String @id @default(uuid())
-  title       String
-  description String
-  duration    String
-  difficulty  String
-  icon        String
-  color       String
-  type        String @default("Custom")
+  id           String   @id @default(uuid())
+  title        String
+  description  String
+  duration     String
+  difficulty   String
+  icon         String
+  color        String
+  type         String   @default("Custom")
 
-  sessions    InterviewSession[]
+  isSystem     Boolean  @default(false)
+  creatorId    Int?
+  creator      User?    @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+
+  documents    Json     @default("[]") // Array of { name, url, size }
+  systemPrompt String?  @db.Text
+
+  sessions     InterviewSession[]
 
   @@map("interview_templates")
 }

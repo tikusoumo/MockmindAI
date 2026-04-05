@@ -84,8 +84,8 @@ export class DataController {
   }
 
   @Get('interviews/past')
-  async getPastInterviews() {
-    return this.dataService.getPastInterviews();
+  async getPastInterviews(@Req() req: any) {
+    return this.dataService.getPastInterviews(req.user.userId, req.user.email);
   }
 
   @Post('report')

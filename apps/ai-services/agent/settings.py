@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     livekit_api_key: str | None = None
     livekit_api_secret: str | None = None
 
+    # LiveKit worker process tuning
+    # Defaults are conservative for memory-constrained containers.
+    livekit_num_idle_processes: int = 1
+    livekit_initialize_process_timeout: float = 60.0
+    livekit_job_memory_warn_mb: float = 1200.0
+    livekit_job_memory_limit_mb: float = 0.0
+
     google_api_key: str | None = None
     google_credentials_file: str | None = None
 

@@ -24,14 +24,18 @@ import {
 } from "@/components/ui/table";
 import Link from "next/link";
 import type { PastInterview } from "@/data/mockData";
-import { useBackendData } from "@/lib/backend";
-import { fallbackPastInterviews } from "@/lib/fallback-data";
+import { useBackendDataState } from "@/lib/backend";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function HistoryPage() {
-  const pastInterviews = useBackendData<PastInterview[]>(
+  const { data: pastInterviews, isLoading } = useBackendDataState<PastInterview[]>(
     "/api/interviews/past",
-    fallbackPastInterviews
+    []
   );
+
+  if (isLoading) {
+    return <HistorySkeleton />;
+  }
 
   return (
     <div className="space-y-8">
@@ -104,7 +108,7 @@ export default function HistoryPage() {
                   </TableCell>
                   <TableCell className="text-right pr-6">
                     <Button variant="ghost" size="sm" asChild>
-                      <Link href="/report">
+                      <Link href={`/report/${interview.id}`}>
                         View Report <ExternalLink className="ml-2 h-3 w-3" />
                       </Link>
                     </Button>
@@ -113,6 +117,37 @@ export default function HistoryPage() {
               ))}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function HistorySkeleton() {
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-4 w-80" />
+        </div>
+        <Skeleton className="h-10 w-28" />
+      </div>
+
+      <div className="flex items-center gap-4">
+        <Skeleton className="h-10 w-full max-w-sm" />
+        <Skeleton className="h-10 w-10" />
+      </div>
+
+      <Card>
+        <CardHeader className="px-6">
+          <Skeleton className="h-6 w-36" />
+        </CardHeader>
+        <CardContent className="p-6 space-y-4">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
         </CardContent>
       </Card>
     </div>

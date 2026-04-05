@@ -38,7 +38,8 @@ import { RecentActivity } from "@/components/dashboard/RecentActivity";
 import { SkillsRadar } from "@/components/dashboard/SkillsRadar";
 import { LatestInsights } from "@/components/dashboard/LatestInsights";
 import { cn } from "@/lib/utils";
-import { backendGet, backendPost, useBackendData } from "@/lib/backend";
+import { backendGet, backendPost, useBackendDataState } from "@/lib/backend";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   fallbackCurrentUser,
   fallbackInterviewTemplates,
@@ -48,19 +49,18 @@ import {
 import { NewSessionModal } from "@/components/dashboard/NewSessionModal";
 
 export default function Dashboard() {
-  const user = useBackendData<User>("/api/user", fallbackCurrentUser);
-  const interviewTemplates = useBackendData<InterviewTemplate[]>(
+  const { data: user, isLoading: isUserLoading } = useBackendDataState<User>("/api/user", fallbackCurrentUser);
+  const { data: interviewTemplates, isLoading: isTemplatesLoading } = useBackendDataState<InterviewTemplate[]>(
     "/api/interview-templates",
     fallbackInterviewTemplates
   );
-  const progressStats = useBackendData<ProgressStat[]>(
+  const { data: progressStats, isLoading: isProgressLoading } = useBackendDataState<ProgressStat[]>(
     "/api/progress-stats",
     fallbackProgressStats
   );
 
-  const [sessions, setSessions] = React.useState<ScheduledSession[]>(
-    fallbackUpcomingSchedule
-  );
+  const [sessions, setSessions] = React.useState<ScheduledSession[]>([]);
+  const [isScheduleLoading, setIsScheduleLoading] = React.useState(true);
   const [scheduleOpen, setScheduleOpen] = React.useState(false);
   const [draftSession, setDraftSession] = React.useState({
     title: "",
@@ -70,10 +70,19 @@ export default function Dashboard() {
   });
 
   React.useEffect(() => {
+    setIsScheduleLoading(true);
     backendGet<ScheduledSession[]>("/api/schedule")
       .then((items) => setSessions(items))
-      .catch(() => setSessions(fallbackUpcomingSchedule));
+      .catch(() => setSessions(fallbackUpcomingSchedule))
+      .finally(() => setIsScheduleLoading(false));
   }, []);
+
+  const isInitialLoading =
+    isUserLoading || isTemplatesLoading || isProgressLoading || isScheduleLoading;
+
+  if (isInitialLoading) {
+    return <DashboardSkeleton />;
+  }
 
   const canSchedule =
     draftSession.title.trim().length > 0 &&
@@ -225,8 +234,8 @@ export default function Dashboard() {
                 {sessions.map((session) => (
                   <div key={session.id} className="flex items-start gap-4 rounded-lg border p-3 transition-colors hover:bg-accent/50">
                     <div className="flex h-12 w-12 flex-col items-center justify-center rounded-lg bg-primary/10 text-primary font-bold text-sm">
-                      <span>{new Date(session.date).getDate()}</span>
-                      <span className="text-[10px] uppercase">{new Date(session.date).toLocaleString('default', { month: 'short' })}</span>
+                      <span>{String(new Date(session.date).getDate() || '-')}</span>
+                      <span className="text-[10px] uppercase">{String(new Date(session.date).toLocaleString('default', { month: 'short' }) || '-')}</span>
                     </div>
                     <div className="flex-1 space-y-1">
                       <p className="font-medium leading-none">{session.title}</p>
@@ -318,6 +327,50 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <div className="flex gap-3">
+          <Skeleton className="h-10 w-28" />
+          <Skeleton className="h-10 w-36" />
+        </div>
+      </div>
+
+      <Skeleton className="h-28 w-full" />
+
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <Skeleton className="h-44 w-full" />
+        <Skeleton className="h-44 w-full" />
+        <Skeleton className="h-44 w-full" />
+        <Skeleton className="h-44 w-full" />
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-7">
+        <div className="col-span-4 space-y-3">
+          <Skeleton className="h-72 w-full" />
+          <div className="grid gap-3 md:grid-cols-3">
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-32 w-full" />
+            <div className="md:col-span-3">
+              <Skeleton className="h-52 w-full" />
+            </div>
+          </div>
+        </div>
+        <div className="col-span-4 lg:col-span-3 space-y-4">
+          <Skeleton className="h-72 w-full" />
+          <Skeleton className="h-80 w-full" />
         </div>
       </div>
     </div>

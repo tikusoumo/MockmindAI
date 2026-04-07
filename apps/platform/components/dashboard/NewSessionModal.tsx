@@ -19,6 +19,7 @@ import { Play, Sparkles, Code, Brain, Users, Zap, Target, Trophy, Edit2, Loader2
 import { cn } from "@/lib/utils";
 import type { InterviewTemplate } from "@/data/mockData";
 import { CustomSessionForm } from "./CustomSessionForm";
+import { useTemplates } from "@/hooks/useTemplates";
 
 interface NewSessionModalProps {
   children: React.ReactNode;
@@ -29,11 +30,13 @@ interface NewSessionModalProps {
 
 export function NewSessionModal({ children, templates, defaultTab = "templates", defaultSelectedTemplateId }: NewSessionModalProps) {
   const router = useRouter();
+  const { addTemplate, updateTemplate } = useTemplates();
   const [open, setOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState(defaultTab);
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | null>(defaultSelectedTemplateId ?? null);
   const [editingTemplate, setEditingTemplate] = React.useState<InterviewTemplate | null>(null);
   const [isStarting, setIsStarting] = React.useState(false);
+  const [startingText, setStartingText] = React.useState("Starting session...");
 
   // All templates come from backend (passed as props) — no localStorage merge needed
   const allTemplates = templates;
@@ -46,6 +49,7 @@ export function NewSessionModal({ children, templates, defaultTab = "templates",
       setSelectedTemplateId(defaultSelectedTemplateId ?? null);
       setEditingTemplate(null);
       setIsStarting(false);
+      setStartingText("Starting session...");
     }
   }, [open, defaultTab, defaultSelectedTemplateId]);
 
@@ -54,6 +58,7 @@ const handleStartFromTemplate = async () => {
       const template = allTemplates.find(t => t.id === selectedTemplateId);
       if (template) {
         setIsStarting(true);
+        setStartingText("Creating Database Session...");
         try {
           const data = {
             title: template.title,
@@ -64,6 +69,7 @@ const handleStartFromTemplate = async () => {
             accessType: "link"
           };
           const response = await backendPost<{id: string}>("/api/sessions", data);
+          setStartingText("Connecting to AI Interviewer...");
           router.push(`/interview?sessionId=${response.id}`);
           setOpen(false);
           return;
@@ -73,6 +79,7 @@ const handleStartFromTemplate = async () => {
         }
       }
       setIsStarting(true);
+      setStartingText("Loading Interview Plan...");
       router.push(`/interview?template=${selectedTemplateId}&mode=strict`);
       setOpen(false);
     }
@@ -80,26 +87,35 @@ const handleStartFromTemplate = async () => {
 
   const handleStartCustom = async (data: any) => {
     setIsStarting(true);
+    setStartingText("Registering Interview Plan...");
     try {
       // POST the fully populated form data, including multiple participants/invites
       const response = await backendPost<{id: string}>("/api/sessions", data);
 
       if (data.files && data.files.length > 0) {
+        setStartingText("Indexing context for AI (this may take a few seconds)...");
+        let i = 1;
         for (const fileObj of data.files) {
           if (fileObj.file) {
+            setStartingText(`Analyzing Document ${i} of ${data.files.length}...`);
             const formData = new FormData();
             formData.append('file', fileObj.file);
+            formData.append('doc_type', 'resume');
+            formData.append('user_id', 'user');
             try {
               await backendPostFormData<any>(`/api/agent/upload/${response?.id}`, formData);
             } catch (err) {
               console.error("Failed to upload document for RAG:", err);
             }
+            i++;
           }
         }
       }
 
+      setStartingText("Requesting Voice Agent...");
       const params = new URLSearchParams({
         sessionId: response.id,
+        template: response.id,
         title: data.topic,
         mode: data.mode,
         difficulty: data.difficulty,
@@ -134,10 +150,19 @@ const handleStartFromTemplate = async () => {
     setActiveTab("custom");
   };
 
-  const handleSaveTemplate = (data: InterviewTemplate) => {
-    // Templates are now persisted in the DB via useTemplates hook (not local state)
-    setActiveTab("templates");
-    setSelectedTemplateId(data.id);
+  const handleSaveTemplate = async (data: InterviewTemplate) => {
+    try {
+      if (editingTemplate) {
+        await updateTemplate(editingTemplate.id, data);
+      } else {
+        await addTemplate(data);
+      }
+      setActiveTab("templates");
+      setSelectedTemplateId(data.id);
+      window.location.reload();
+    } catch (e) {
+      console.error("Failed to save template", e);
+    }
   };
 
   return (
@@ -149,8 +174,8 @@ const handleStartFromTemplate = async () => {
         {isStarting && (
           <div className="absolute inset-0 z-50 bg-background/75 backdrop-blur-sm flex items-center justify-center">
             <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-lg">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span className="text-sm font-medium">Starting session...</span>
+              <Loader2 className="h-4 w-4 animate-spin text-primary min-w-4" />
+              <span className="text-sm font-medium whitespace-nowrap">{startingText}</span>
             </div>
           </div>
         )}

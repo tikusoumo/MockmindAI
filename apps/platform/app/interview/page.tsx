@@ -19,6 +19,8 @@ import {
   Pin,
   Maximize,
   Minimize,
+  ChevronDown,
+  ChevronUp,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -31,15 +33,16 @@ import { CodeEditor } from "@/components/interview/CodeEditor";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import Link from "next/link";
 import type { User } from "@/data/mockData";
+import { useBackendData } from "@/lib/backend";
 import { fallbackCurrentUser } from "@/lib/fallback-data";
-import { toast } from "sonner";
 import { ParticipantVisualizer } from "@/components/interview/ParticipantVisualizer";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
 
@@ -48,69 +51,11 @@ import {
   RoomAudioRenderer,
   useLocalParticipant,
   useRemoteParticipants,
-  useRoomContext,
   VideoTrack,
   useTracks,
-  TrackRefContext,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import '@livekit/components-styles';
-
-// Internal component to safely wrap LiveKit VideoTrack in a context where needed
-function TrackRefContextIfNeeded({ p }: { p: any }) {
-    if (!p.lkpParticipant) return null;
-    const pub = p.lkpParticipant.getTrackPublication(Track.Source.Camera);
-    if (!pub) return null;
-
-    const trackRef = {
-        participant: p.lkpParticipant,
-        source: Track.Source.Camera,
-        publication: pub
-    };
-
-    return (
-        <TrackRefContext.Provider value={trackRef}>
-            <VideoTrack />
-        </TrackRefContext.Provider>
-    );
-}
-
-function LiveKitConnectionOverlay() {
-  const room = useRoomContext();
-  const [lastKnownState, setLastKnownState] = useState("connecting");
-
-  useEffect(() => {
-    const anyRoom = room as any;
-    if (!anyRoom) return;
-
-    const normalize = (state: unknown) => String(state ?? "").toLowerCase();
-
-    const onConnectionStateChanged = (state: unknown) => {
-      setLastKnownState(normalize(state));
-    };
-
-    anyRoom.on?.("connectionStateChanged", onConnectionStateChanged);
-
-    return () => {
-      anyRoom.off?.("connectionStateChanged", onConnectionStateChanged);
-    };
-  }, [room]);
-
-  const anyRoom = room as any;
-  const currentState = String(anyRoom?.state ?? anyRoom?.connectionState ?? lastKnownState).toLowerCase();
-  const isConnecting = currentState !== "connected";
-
-  if (!isConnecting) return null;
-
-  return (
-    <div className="fixed inset-0 z-[165] bg-background/70 backdrop-blur-sm flex items-center justify-center">
-      <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-lg">
-        <Loader2 className="h-4 w-4 animate-spin text-primary" />
-        <span className="text-sm font-medium">Connecting to server...</span>
-      </div>
-    </div>
-  );
-}
 
 export default function InterviewPage() {
   return (
@@ -123,64 +68,24 @@ export default function InterviewPage() {
 }
 
 function InterviewPageContent() {
-  const router = useRouter();
+  const currentUser = useBackendData<User>("/api/user", fallbackCurrentUser);
   const searchParams = useSearchParams();
   const templateId = searchParams.get("template");
   const customTitle = searchParams.get("title");
   const customType = searchParams.get("type");
   const sessionId = searchParams.get("sessionId");
-  const modeParam = searchParams.get("mode") || "strict";
+
+  const [sessionDbData, setSessionDbData] = useState<any>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem("auth_token");
-    if (!token) {
-      const currentUrl = window.location.pathname + window.location.search;
-      router.push(`/auth?returnTo=${encodeURIComponent(currentUrl)}`);
-    }
-  }, [router]);
-
-  const hasToken = typeof window !== "undefined" ? !!localStorage.getItem("auth_token") : true;
-
-    // Load actual user before generating LiveKit token so that the generated token gets the real user name
-    const [currentUser, setCurrentUser] = useState<User | null>(null);
-    const [isUserLoaded, setIsUserLoaded] = useState(false);
-
-    useEffect(() => {
-        let mounted = true;
-        if (!hasToken) {
-            if (mounted) setIsUserLoaded(true);
-            return;
-        }
-
-        import("@/lib/backend").then(({ backendGet }) => {
-            backendGet<User>("/api/user")
-                .then(user => {
-                    if (mounted) {
-                        setCurrentUser(user);
-                        setIsUserLoaded(true);
-                    }
-                })
-                .catch(() => {
-                    if (mounted) {
-                        setCurrentUser(fallbackCurrentUser);
-                        setIsUserLoaded(true);
-                    }
-                });
-        });
-        return () => { mounted = false; };
-    }, [hasToken]);
-
-    const [sessionDbData, setSessionDbData] = useState<any>(null);
-
-    useEffect(() => {
-        if (sessionId) {
-            import("@/lib/backend").then(({ backendGet }) => {
-          backendGet(`/api/sessions/${sessionId}`)
-                  .then(setSessionDbData)
-                  .catch(console.error);
-            });
-        }
-    }, [sessionId]);
+     if (sessionId) {
+         import("@/lib/backend").then(({ backendGet }) => {
+             backendGet(`/api/sessions/${sessionId}`)
+               .then(setSessionDbData)
+               .catch(console.error);
+         });
+     }
+  }, [sessionId]);
 
   const effectiveType = sessionDbData?.type || customType;
   const isCodingRound = templateId === "machine-coding-round" || templateId === "tech-round" || effectiveType === "Machine Coding" || effectiveType === "Technical";  
@@ -189,7 +94,7 @@ function InterviewPageContent() {
     id: templateId || "dummy",
     title: sessionDbData?.title || customTitle || "Tech Round: React & System Design",
     type: (effectiveType as any) || (isCodingRound ? "Machine Coding" : "Technical"),
-    mode: sessionDbData?.aiBehavior || (modeParam as any) || "strict",
+    mode: sessionDbData?.aiBehavior || (searchParams.get("mode") as any) || "strict",
     duration: "45 mins",
     difficulty: sessionDbData?.difficulty || (searchParams.get("difficulty") as any) || "Medium",
     questions: [],
@@ -202,60 +107,50 @@ function InterviewPageContent() {
   const [liveKitToken, setLiveKitToken] = useState<string>("");
   const [liveKitUrl, setLiveKitUrl] = useState<string>("");
   const [error, setError] = useState<string>("");
-  const [isFetchingToken, setIsFetchingToken] = useState(false);
-  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
      let mounted = true;
-     if (!hasToken || !isUserLoaded) return;
-
-      setIsFetchingToken(true);
-      setError("");
-
-       import("@/lib/backend").then(({ backendPost }) => {
+     import("@/lib/backend").then(({ backendPost }) => {
         backendPost<{token: string, url: string}>("/api/livekit/token", {
            room_name: `interview-${sessionId || templateId || "practice"}`,
            participant_name: currentUser?.name || "Candidate",            
            metadata: JSON.stringify({
-               templateId: templateId,
-               sessionId: sessionId,
+               templateId: sessionId || templateId,
                templateTitle: customTitle || "Interview",
-              mode: modeParam
+               mode: searchParams.get("mode") || "strict"
             })        }).then((data) => {
            if (mounted) {
               setLiveKitToken(data.token);
               setLiveKitUrl(data.url);
-              setIsFetchingToken(false);
            }
         }).catch((err) => {
+           // We suppress LiveKit token errors for now so we can still view the Dummy UI!
            if (mounted) {
-               console.error("Failed to fetch LiveKit token", err);
-               setIsFetchingToken(false);
-               setError("Unable to connect to server");
+               console.warn("LiveKit offline. Rendering dummy UI mode.");
+               setLiveKitToken("dummy"); // Bypass to allow rendering UI
            }
         });
      });
      return () => { mounted = false; };
-  }, [hasToken, templateId, sessionId, currentUser?.name, isUserLoaded, customTitle, modeParam, retryNonce]);
+  }, [templateId, sessionId, currentUser?.name]);
 
-  if (!currentUser || !liveKitToken) {
-     return (
-       <div className="fixed inset-0 z-[150] flex flex-col items-center justify-center gap-4 text-center bg-background/70 backdrop-blur-sm px-6">
-         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-         <p className="text-muted-foreground text-sm">
-           {!isUserLoaded
-             ? "Preparing interview..."
-             : isFetchingToken
-               ? "Connecting to server..."
-               : error || "Connecting to session..."}
-         </p>
-         {!!error && (
-           <Button variant="outline" onClick={() => setRetryNonce((v) => v + 1)}>
-             Retry
-           </Button>
-         )}
-       </div>
-     );
+  if (!liveKitToken) {
+     return <div className="flex flex-col h-full items-center justify-center gap-4 text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="flex flex-col gap-1">
+           <h3 className="font-semibold text-lg text-foreground">Preparing AI Interviewer</h3>
+           <p className="text-muted-foreground text-sm">Bringing up the conversational agent...</p>
+        </div>
+     </div>
+  }
+
+  // If token is literally "dummy", we bypass actual LiveKit connection
+  if (liveKitToken === "dummy") {
+      return (
+          <div className="flex flex-col gap-4 h-full w-full">
+            <InterviewSession currentUser={currentUser} template={dummyTemplate} isDummyMode={true} sessionDbData={sessionDbData} sessionId={sessionId || undefined} />
+          </div>
+      );
   }
 
   return (
@@ -263,68 +158,19 @@ function InterviewPageContent() {
       token={liveKitToken}
       serverUrl={liveKitUrl}
       connect={true}
-      video={false}
+      video={true}
       audio={true}
       className="flex flex-col gap-4 h-full w-full"
     >
-      <LiveKitConnectionOverlay />
-      <InterviewSessionWithLiveKit currentUser={currentUser} template={dummyTemplate} isDummyMode={false} sessionDbData={sessionDbData} />
-      <RoomAudioRenderer volume={1} muted={false} />
+      <InterviewSession currentUser={currentUser} template={dummyTemplate} isDummyMode={false} sessionDbData={sessionDbData} sessionId={sessionId || undefined} />
+      <RoomAudioRenderer />
     </LiveKitRoom>
   );
 }
 
-// Wrapper component that uses LiveKit hooks and passes participants to InterviewSession
-function InterviewSessionWithLiveKit({ currentUser, template, isDummyMode, sessionDbData }: { currentUser: User; template?: InterviewTemplate; isDummyMode: boolean; sessionDbData?: any; }) {
-  const rawRemoteParticipants = useRemoteParticipants();
-  const room = useRoomContext();
-  
-  return (
-    <InterviewSession 
-      currentUser={currentUser} 
-      template={template} 
-      isDummyMode={isDummyMode} 
-      sessionDbData={sessionDbData}
-      liveKitParticipants={rawRemoteParticipants}
-      liveKitRoom={room}
-    />
-  );
-}
-
-function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, liveKitParticipants = [], liveKitRoom = null }: { currentUser: User; template?: InterviewTemplate; isDummyMode: boolean; sessionDbData?: any; liveKitParticipants?: any[]; liveKitRoom?: any }) {
+function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, sessionId }: { currentUser: User; template?: InterviewTemplate; isDummyMode: boolean; sessionDbData?: any; sessionId?: string; }) {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [isAudioBlocked, setIsAudioBlocked] = useState(false);
-
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteAccessType, setInviteAccessType] = useState(sessionDbData?.accessType || "restricted");
-  const [isInviting, setIsInviting] = useState(false);
-
-  const handleInvite = async () => {
-    if (!inviteEmail && inviteAccessType === sessionDbData?.accessType) {
-        toast.error("Please enter an email or change access type.");
-        return;
-    }
-    if (!sessionDbData?.id) {
-        toast.error("You are in a sandbox session resulting from a direct link template. Please start a real session from the dashboard to invite users.");
-        return;
-    }
-    try {
-        setIsInviting(true);
-        const { backendPost } = await import("@/lib/backend");
-        const payload = {
-            emails: inviteEmail ? [inviteEmail] : [],
-            accessType: inviteAccessType === 'anyone' ? 'link' : inviteAccessType
-        };
-        await backendPost(`/api/sessions/${sessionDbData?.id}/invite`, payload);
-        toast.success("Session updated / Invitation sent!");
-        setInviteEmail("");
-    } catch (err: any) {
-        toast.error("Failed to send invite: " + err.message);
-    } finally {
-        setIsInviting(false);
-    }
-  };
 
   const [chatMessages, setChatMessages] = useState<{name: string, text: string, time: string}[]>([
       { name: "System", text: "Welcome to the interview session. Multiple participants can join.", time: "10:00 AM" }
@@ -334,7 +180,6 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
   const effectiveType = sessionDbData?.type || template?.type;
   const isCodingRound = effectiveType === "Machine Coding" || effectiveType === "Technical" || template?.id === "machine-coding-round" || template?.id === "tech-round";
   const [code, setCode] = useState("// Write your solution here...\n\nfunction solution() {\n  \n}");
-  const [currentEditorLanguage, setCurrentEditorLanguage] = useState("javascript");
   
   // IDE Toggles
   const [isIdeCollapsed, setIsIdeCollapsed] = useState(false);
@@ -366,8 +211,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
   }, [stream, isCameraEnabled]);
 
   // LiveKit WebRTC Hooks (only when connected)
-  const { localParticipant: liveKitLocalParticipant } = useLocalParticipant();
-  const lkParticipant = isDummyMode ? null : liveKitLocalParticipant;
+  const lkParticipant = !isDummyMode ? useLocalParticipant().localParticipant : null;
   const isScreenShareEnabled = lkParticipant?.isScreenShareEnabled ?? false;
 
   const toggleMic = useCallback(() => setIsMicEnabled(prev => !prev), [setIsMicEnabled]);
@@ -375,45 +219,6 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
   const toggleScreenShare = useCallback(() => {
      if (lkParticipant) lkParticipant.setScreenShareEnabled(!isScreenShareEnabled, { audio: false }).catch(console.error);
   }, [lkParticipant, isScreenShareEnabled]);
-
-  // Sync local participant media with UI toggles
-  useEffect(() => {
-    if (lkParticipant) {
-      lkParticipant.setMicrophoneEnabled(isMicEnabled).catch(console.error);
-    }
-  }, [lkParticipant, isMicEnabled]);
-
-  useEffect(() => {
-    if (lkParticipant) {
-      lkParticipant.setCameraEnabled(isCameraEnabled).catch(console.error);
-    }
-  }, [lkParticipant, isCameraEnabled]);
-
-  // Browsers may block remote audio until a user gesture. Try once on mount,
-  // and retry after the first click/keypress so agent TTS becomes audible.
-  useEffect(() => {
-    if (isDummyMode || !liveKitRoom) return;
-
-    const unlockAudio = () => {
-      if (typeof liveKitRoom.startAudio === "function") {
-        liveKitRoom.startAudio().catch((err: unknown) => {
-          setIsAudioBlocked(true);
-          console.warn("LiveKit audio unlock pending user gesture", err);
-        }).then(() => {
-          setIsAudioBlocked(false);
-        });
-      }
-    };
-
-    unlockAudio();
-    window.addEventListener("pointerdown", unlockAudio, { once: true });
-    window.addEventListener("keydown", unlockAudio, { once: true });
-
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-    };
-  }, [isDummyMode, liveKitRoom]);
 
   // Fullscreen effect listener for IDE
   useEffect(() => {
@@ -460,66 +265,89 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
   }, [isDummyMode, toggleScreenShare]);
 
   // --- Arrays for Layout ---
-  // These states are set by LiveKitSessionContent when not in dummy mode
-  const remoteParticipants = liveKitParticipants || [];
+  const rawRemoteParticipants = useRemoteParticipants();
+  const remoteParticipants = !isDummyMode ? rawRemoteParticipants : [];
   const isAgentSpeaking = remoteParticipants.some(p => p.identity.startsWith('agent-') && p.isSpeaking);
   const isAgentConnected = remoteParticipants.some(p => p.identity.startsWith('agent-'));
   const isAgentListening = isAgentConnected && !isAgentSpeaking;
 
   // --- Session End / Report Modal ---
   const [showReportModal, setShowReportModal] = useState(false);
-  const [liveReport, setLiveReport] = useState<any>(null);
-  const [isEndingInterview, setIsEndingInterview] = useState(false);
-
-  const handleEndInterview = useCallback(async () => {
-    if (showReportModal) return;
-    setShowReportModal(true);
-    setIsEndingInterview(true);
-
-    try {
-      if (!isDummyMode && liveKitRoom) {
-        await Promise.resolve(liveKitRoom.disconnect());
-      }
-    } catch (err) {
-      console.error("Failed to disconnect LiveKit room on end interview", err);
-    } finally {
-      setIsEndingInterview(false);
-    }
-  }, [showReportModal, isDummyMode, liveKitRoom]);
+  const [modalReportData, setModalReportData] = useState<any>(null);
+  const [isLoadingReport, setIsLoadingReport] = useState(false);
 
   useEffect(() => {
-    if (!showReportModal || !sessionDbData?.id) return;
-    setLiveReport(null);
-
-    const pollStartedAt = Date.now();
-
-    const interval = setInterval(async () => {
-      try {
-        const { backendGet } = await import("@/lib/backend");
-        const res: any = await backendGet(`/api/reports/${sessionDbData?.id}`);
-        const reportId = String(res?.id || "");
-        if (!reportId) {
-          return;
+    if (showReportModal) {
+      let cancelled = false;
+      const pollStartedAt = Date.now();
+      const maxPollDurationMs = 8 * 60 * 1000;
+      setIsLoadingReport(true);
+      const isTimeoutFallbackReport = (
+        report:
+          | {
+              overallScore?: number;
+              transcript?: Array<{ text?: string }>;
+            }
+          | null
+          | undefined,
+      ) => {
+        if (!report || Number(report.overallScore ?? 0) !== 0) {
+          return false;
         }
 
-        // Always render current payload so the modal doesn't spin forever while pending.
-        setLiveReport(res);
-
-        if (!reportId.startsWith("rep_pending_")) {
-          clearInterval(interval);
-          return;
+        if (!Array.isArray(report.transcript)) {
+          return false;
         }
 
-        // Stop polling after 2 minutes and let the report page continue the pending state.
-        if (Date.now() - pollStartedAt > 120000) {
-          clearInterval(interval);
-        }
-      } catch {}
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [showReportModal, sessionDbData?.id]);
+        return report.transcript.some(
+          (entry: { text?: string } | undefined) =>
+            typeof entry?.text === "string" && /timed out|fallback report/i.test(entry.text),
+        );
+      };
 
-  const isPendingLiveReport = Boolean(liveReport?.id?.startsWith("rep_pending_"));
+      const pollInterval = window.setInterval(() => {
+        import("@/lib/backend").then(({ backendGet }) => {
+          backendGet<{
+            id?: string;
+            overallScore?: number;
+            transcript?: Array<{ text?: string }>;
+          }>(`/api/reports/${sessionId || 'latest'}`)
+            .then((data) => {
+              const isPendingReport = String(data?.id || "").startsWith("rep_pending");
+              const isTimeoutFallback = isTimeoutFallbackReport(data);
+
+              if ((isPendingReport || isTimeoutFallback) && Date.now() - pollStartedAt > maxPollDurationMs) {
+                if (!cancelled) {
+                  setModalReportData(data);
+                  setIsLoadingReport(false);
+                }
+                clearInterval(pollInterval);
+                return;
+              }
+
+              if (!cancelled && data && data.overallScore !== undefined && !isPendingReport && !isTimeoutFallback) {
+                setModalReportData(data);
+                setIsLoadingReport(false);
+                clearInterval(pollInterval);
+              }
+            })
+            .catch(() => {
+              if (Date.now() - pollStartedAt > maxPollDurationMs) {
+                if (!cancelled) {
+                  setIsLoadingReport(false);
+                }
+                clearInterval(pollInterval);
+              }
+            });
+        });
+      }, 3000);
+      
+      return () => {
+        cancelled = true;
+        clearInterval(pollInterval);
+      };
+    }
+  }, [showReportModal, sessionId]);
 
   const fallbackInterviewers = [
       { id: "ai-1", name: "Sarah (Lead)", role: "AI Agent", avatar: "https://i.pravatar.cc/150?u=sarah", speaking: isAgentSpeaking, isAI: true },
@@ -531,62 +359,44 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
       { id: "peer-1", name: "Eliza (Pairing)", role: "Candidate", avatar: "https://i.pravatar.cc/150?u=eliza", isLocal: false, camOn: true, micOn: false },
   ];
 
-  let interviewers: any[], candidates: any[];
+  let interviewers, candidates;
 
   if (sessionDbData && sessionDbData.participants) {
       interviewers = [
-          { id: "ai-1", name: `${sessionDbData?.persona || 'Sarah'} (Lead)`, role: "AI Agent", avatar: `https://i.pravatar.cc/150?u=${sessionDbData?.persona?.toLowerCase() || 'sarah'}`, speaking: isAgentSpeaking, isAI: true, isHost: false }
+          { id: "ai-1", name: `${sessionDbData?.persona || 'Sarah'} (Lead)`, role: "AI Agent", avatar: `https://i.pravatar.cc/150?u=${sessionDbData?.persona?.toLowerCase() || 'sarah'}`, speaking: isAgentSpeaking, isAI: true }
       ];
-
+      
       const sessionParts = sessionDbData.participants || [];
 
       sessionParts.forEach((p: any) => {
-            const pName = p.name || p.email?.split('@')[0] || "Unknown";        
-            const matchingLkParticipant = remoteParticipants.find((lkp: any) => lkp.name === pName || lkp.identity.includes(pName));
-            if (!matchingLkParticipant) return; // Only show if they've joined LiveKit
-
-            const isLkSpeaking = matchingLkParticipant.isSpeaking;
-            const roleNormalized = p.role?.toLowerCase() || '';
-
-            if (roleNormalized === 'interviewer' || roleNormalized === 'observer') {
-                interviewers.push({
-                    id: p.id,
-                    lkpIdentity: matchingLkParticipant.identity,
-                    lkpParticipant: matchingLkParticipant,
-                    name: pName,
-                    role: p.role,
-                    avatar: `https://i.pravatar.cc/150?u=${p.email}`,
-                    speaking: isLkSpeaking,
-                    isHost: sessionDbData.userId === p.userId
+          const roleNormalized = p.role?.toLowerCase() || '';
+          if (roleNormalized === 'interviewer' || roleNormalized === 'observer') {
+              interviewers.push({
+                  id: p.id,
+                  name: p.name || p.email?.split('@')[0] || "Unknown",
+                  role: p.role,
+                  avatar: `https://i.pravatar.cc/150?u=${p.email}`,
+                  speaking: false,
+                  isAI: false
               });
           }
       });
 
       candidates = [
-          { id: "self", name: currentUser?.name || "You", role: "Candidate", avatar: currentUser?.avatar, isLocal: true, camOn: isCameraEnabled, micOn: isMicEnabled, isHost: sessionDbData.userId === (currentUser as any)?.id }
+          { id: "self", name: currentUser?.name || "You", role: "Candidate", avatar: currentUser?.avatar, isLocal: true, camOn: isCameraEnabled, micOn: isMicEnabled }
       ];
-
+      
       sessionParts.forEach((p: any) => {
           const roleNormalized = p.role?.toLowerCase() || '';
-            const pName = p.name || p.email?.split('@')[0] || "Unknown";        
-            const matchingLkParticipant = remoteParticipants.find((lkp: any) => lkp.name === pName || lkp.identity.includes(pName));
-
-            // Only render candidate if they actully joined LiveKit
-            if (!matchingLkParticipant) return;
-
           if (roleNormalized === 'candidate' && p.email !== (currentUser as any)?.email) {
               candidates.push({
                   id: p.id,
-                  lkpIdentity: matchingLkParticipant.identity,
-                  lkpParticipant: matchingLkParticipant,
-                  name: pName,
+                  name: p.name || p.email?.split('@')[0] || "Unknown",
                   role: p.role,
                   avatar: `https://i.pravatar.cc/150?u=${p.email}`,
                   isLocal: false,
-                  camOn: matchingLkParticipant.isCameraEnabled,
-                  micOn: matchingLkParticipant.isMicrophoneEnabled,
-                  speaking: matchingLkParticipant.isSpeaking,
-                  isHost: sessionDbData.userId === p.userId
+                  camOn: true,
+                  micOn: false
               });
           }
       });
@@ -594,45 +404,21 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
       // Dynamic rendering directly from templates instead of the static 4 users
       const personaName = sessionDbData?.persona || template?.persona || "Sarah";
       interviewers = [
-          { id: "ai-1", name: `${personaName} (Lead)`, role: "AI Agent", avatar: `https://i.pravatar.cc/150?u=${personaName.toLowerCase()}`, speaking: isAgentSpeaking, isAI: true, isHost: false }
+          { id: "ai-1", name: `${personaName} (Lead)`, role: "AI Agent", avatar: `https://i.pravatar.cc/150?u=${personaName.toLowerCase()}`, speaking: isAgentSpeaking, isAI: true }
       ];
       candidates = [
-          { id: "self", name: currentUser?.name || "You", role: "Candidate", avatar: currentUser?.avatar, isLocal: true, camOn: isCameraEnabled, micOn: isMicEnabled, isHost: sessionDbData?.userId === (currentUser as any)?.id }
+          { id: "self", name: currentUser?.name || "You", role: "Candidate", avatar: currentUser?.avatar, isLocal: true, camOn: isCameraEnabled, micOn: isMicEnabled }
       ];
   }
-
-  // Catch-all for any connected remote participant not matched above
-  remoteParticipants.forEach((lkp: any) => {
-      if (lkp.identity.startsWith('agent-')) return;
-
-      const inCandidates = candidates.find((c: any) => c.lkpIdentity === lkp.identity || (c.id !== 'self' && c.name === lkp.name && !c.lkpIdentity));
-      const inInterviewers = interviewers.find((i: any) => i.lkpIdentity === lkp.identity || (i.id !== 'ai-1' && i.name === lkp.name && !i.lkpIdentity));       
-
-      if (!inCandidates && !inInterviewers) {
-          candidates.push({
-              id: lkp.identity,
-              lkpIdentity: lkp.identity,
-              lkpParticipant: lkp,
-              name: lkp.name || lkp.identity,
-              role: "Guest",
-              avatar: `https://i.pravatar.cc/150?u=${lkp.identity}`,
-              isLocal: false,
-              camOn: lkp.isCameraEnabled,
-              micOn: lkp.isMicrophoneEnabled,
-              speaking: lkp.isSpeaking,
-              isHost: false
-          });
-      }
-  });
 
   const allParticipants = [...interviewers, ...candidates];
 
   // Helper derived states for layout
-  const effectiveViewMode = isScreenShareActive ? "presentation" : isCodingRound ? "coding" : (pinnedId || viewMode === "speaker") ? "speaker" : "grid";        
-
-  const mainParticipant = pinnedId
-      ? allParticipants.find(p => p.id === pinnedId)
-      : allParticipants.find(p => p.speaking) || allParticipants[0];
+  const effectiveViewMode = isScreenShareActive ? "presentation" : isCodingRound ? "coding" : (pinnedId || viewMode === "speaker") ? "speaker" : "grid";
+  
+  const mainParticipant = pinnedId 
+      ? allParticipants.find(p => p.id === pinnedId) 
+      : allParticipants.find(p => 'speaking' in p && p.speaking) || allParticipants[0];
 
   const handlePin = (id: string) => {
       setPinnedId(prev => prev === id ? null : id);
@@ -698,18 +484,11 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                  </div>
              )}
 
-             {/* Remote user camera feed */}
-             {!isLocal && !isAI && p.lkpParticipant && hasCam && (
-                 <div className="absolute inset-0 z-0 [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:transform [&>video]:-scale-x-100">
-                     <TrackRefContextIfNeeded p={p} />
-                 </div>
-             )}
-
              {!hasCam && (
                 <div className="z-10 relative">
                     {speaking && isAI && <div className="absolute -inset-2 rounded-full bg-indigo-500/20 blur-lg animate-pulse"></div>}
                     {speaking && !isAI && <div className="absolute -inset-2 rounded-full bg-emerald-500/10 blur-md animate-pulse"></div>}
-
+                    
                     <Avatar className={cn(
                         "border-2 transition-all duration-300 shadow-md",
                         isMainView ? "h-32 w-32" : (!isCodingRound ? "h-20 w-20" : "h-14 w-14"),
@@ -730,11 +509,6 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                         hasCam ? "text-white" : "text-foreground"
                     )}>
                         {p.name} {p.id === 'self' && "(You)"}
-                        {p.isHost && (
-                            <Badge variant="secondary" className={cn("px-1.5 py-0 text-[10px] ml-1 font-medium", hasCam ? "bg-indigo-500/30 text-white border-white/20" : "bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border-indigo-500/20")}>
-                                Host
-                            </Badge>
-                        )}
                     </h3>
                     <p className={cn(
                         "text-xs font-medium transition-colors drop-shadow-md",
@@ -775,149 +549,117 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
 
   return (
     <div className={cn("flex flex-col gap-4 min-h-full w-full relative transition-all duration-300", isIdeFullscreen && "fixed inset-0 z-[100] bg-background h-screen w-screen p-4")} ref={fullScreenContainerRef}>
-      {!isDummyMode && isAudioBlocked && (
-        <div className="fixed left-1/2 -translate-x-1/2 bottom-28 z-[160]">
-          <Button
-            className="rounded-full shadow-xl"
-            onClick={() => {
-              if (liveKitRoom && typeof liveKitRoom.startAudio === "function") {
-                liveKitRoom.startAudio()
-                  .then(() => setIsAudioBlocked(false))
-                  .catch((err: unknown) => {
-                    setIsAudioBlocked(true);
-                    console.warn("Manual LiveKit audio unlock failed", err);
-                  });
-              }
-            }}
-          >
-            Enable AI Audio
-          </Button>
-        </div>
-      )}
+      <div className="flex items-center justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-3">
+            <h1 className="min-w-0 truncate text-2xl font-bold leading-none">
+              {sessionDbData?.title || template?.title || "Session"}
+            </h1>
+            <Badge variant="outline" className="shrink-0 bg-green-500/10 text-green-500 border-green-500/20">Live</Badge>
+            <span className="shrink-0 tabular-nums text-sm text-muted-foreground">{formatTime(elapsedTime)}</span>
 
-      <div className="flex items-center justify-between gap-3 min-w-0">
-        {/* LEFT — Title + status */}
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <h1 className="truncate text-xl font-bold leading-none min-w-0 shrink">
-            {sessionDbData?.title || template?.title || "Session"}
-          </h1>
-          <Badge variant="outline" className="shrink-0 bg-green-500/10 text-green-500 border-green-500/20 text-[11px]">Live</Badge>
-          <span className="shrink-0 tabular-nums text-sm text-muted-foreground font-mono">{formatTime(elapsedTime)}</span>
-        </div>
+            {/* Configurable Invite / Share Meeting Button */}
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="h-6 ml-2 gap-1 text-xs">
+                    <Users className="h-3 w-3" />
+                    Invite Users
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Share Meeting Session</DialogTitle>
+                  <DialogDescription>
+                    Invite others to join this interview or change link access settings.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="flex flex-col gap-2">
+                    <h4 className="text-sm font-semibold">General Access</h4>
+                    <Select defaultValue="restricted">
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Access Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="restricted">Restricted (Only invited can join)</SelectItem>
+                        <SelectItem value="anyone">Anyone with link</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div className="flex flex-col gap-2 mt-2">
+                    <h4 className="text-sm font-semibold">Invite via Email</h4>
+                    <div className="flex w-full items-center space-x-2">
+                      <Input type="email" placeholder="user@example.com" />
+                      <Button variant="secondary" onClick={() => {
+                        alert("Mock Email sent to participant!");
+                      }}>Send Invite</Button>
+                    </div>
+                  </div>
 
-        {/* RIGHT — Invite + Avatars + View Controls */}
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Avatar stack */}
-          <div className="flex -space-x-2">
-            {allParticipants.slice(0, 3).map((p) => (
-              <Avatar key={p.id} className="h-6 w-6 border border-muted drop-shadow-sm">
-                <AvatarImage src={p.avatar} />
-                <AvatarFallback className="text-[10px]">{p.name[0]}</AvatarFallback>
-              </Avatar>
-            ))}
-            {allParticipants.length > 3 && (
-              <div className="h-6 w-6 rounded-full bg-secondary border border-muted flex items-center justify-center text-[10px] text-muted-foreground shadow-sm">
-                +{allParticipants.length - 3}
-              </div>
-            )}
-          </div>
-
-          {/* Invite dialog */}
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs shrink-0">
-                <Users className="h-3 w-3" />
-                Invite
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
-              <DialogHeader>
-                <DialogTitle>Share Meeting Session</DialogTitle>
-                <DialogDescription>
-                  Invite others to join this interview or change link access settings.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="flex flex-col gap-2">
-                  <h4 className="text-sm font-semibold">General Access</h4>
-                  <Select value={inviteAccessType === 'link' ? 'anyone' : inviteAccessType} onValueChange={(val) => setInviteAccessType(val === 'anyone' ? 'link' : val)}>
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="Access Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="restricted">Restricted (Only invited can join)</SelectItem>
-                      <SelectItem value="anyone">Anyone with link</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-2 mt-2">
-                  <h4 className="text-sm font-semibold">Invite via Email</h4>
-                  <div className="flex w-full items-center space-x-2">
-                    <Input
-                      type="email"
-                      placeholder="user@example.com"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                    />
-                    <Button variant="secondary" onClick={handleInvite} disabled={isInviting}>
-                      {isInviting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Send Invite
-                    </Button>
+                  <div className="mt-4 p-4 border rounded bg-secondary/30">
+                    <p className="text-xs text-muted-foreground mb-2">Meeting Link</p>
+                    <div className="flex items-center space-x-2">
+                      <Input readOnly value={typeof window !== 'undefined' ? window.location.href : ''} className="text-xs" />
+                      <Button size="sm" onClick={() => {
+                        navigator.clipboard.writeText(typeof window !== 'undefined' ? window.location.href : '');
+                        alert("Meeting link copied to clipboard!");
+                      }}>Copy</Button>
+                    </div>
                   </div>
                 </div>
-                <div className="mt-4 p-4 border rounded bg-secondary/30">
-                  <p className="text-xs text-muted-foreground mb-2">Meeting Link</p>
-                  <div className="flex items-center space-x-2">
-                    <Input readOnly value={typeof window !== 'undefined' ? window.location.href : ''} className="text-xs" />
-                    <Button size="sm" onClick={() => {
-                      navigator.clipboard.writeText(typeof window !== 'undefined' ? window.location.href : '');
-                      toast.success("Meeting link copied to clipboard!");
-                    }}>Copy</Button>
-                  </div>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogContent>
+            </Dialog>
 
-          {/* View mode + other controls */}
-          <div className="flex items-center gap-2">
-              <div className="flex items-center rounded-lg border border-border bg-card p-0.5 shadow-sm shrink-0">
-                  <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className={cn("h-7 w-7 rounded-md", viewMode === 'grid' && "bg-secondary text-foreground")}
-                      onClick={() => { setViewMode('grid'); setPinnedId(null); }}
-                      title="Grid View"
-                  >
-                      <LayoutGrid className="h-4 w-4" />
-                  </Button>
-                  <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className={cn("h-7 w-7 rounded-md", viewMode === 'speaker' && "bg-secondary text-foreground")}
-                      onClick={() => setViewMode('speaker')}
-                      title="Speaker View"
-                  >
-                      <UserIcon className="h-4 w-4" />
-                  </Button>
-                  <div className="w-px h-4 bg-border mx-1" />
-                  <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                      onClick={toggleFullscreen}
-                      title={isIdeFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-                  >
-                      {isIdeFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-                  </Button>
-              </div>
-              <Button variant="outline" size="sm" className="h-8 relative" onClick={() => setIsChatOpen(!isChatOpen)}>
-                <MessageSquare className="mr-2 h-4 w-4" /> 
-                Chat
-                <Badge className="absolute -top-2 -right-2 h-4 w-4 p-0 flex items-center justify-center bg-indigo-500">1</Badge>
-              </Button>
+            <div className="flex -space-x-2 ml-4">
+                {allParticipants.slice(0, 3).map((p) => (
+                    <Avatar key={p.id} className="h-6 w-6 border border-muted drop-shadow-sm">
+                        <AvatarImage src={p.avatar} />
+                        <AvatarFallback className="text-[10px]">{p.name[0]}</AvatarFallback>
+                    </Avatar>
+                ))}
+                {allParticipants.length > 3 && (
+                     <div className="h-6 w-6 rounded-full bg-secondary border border-muted flex items-center justify-center text-[10px] text-muted-foreground shadow-sm">+{allParticipants.length - 3}</div>
+                )}
+            </div>
           </div>
+        </div>
+        <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-lg border border-border bg-card p-0.5 shadow-sm mr-2 hidden sm:flex">
+                <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className={cn("h-7 w-7 rounded-md", viewMode === 'grid' && "bg-secondary text-foreground")}
+                    onClick={() => { setViewMode('grid'); setPinnedId(null); }}
+                    title="Grid View"
+                >
+                    <LayoutGrid className="h-4 w-4" />
+                </Button>
+                <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className={cn("h-7 w-7 rounded-md", viewMode === 'speaker' && "bg-secondary text-foreground")}
+                    onClick={() => setViewMode('speaker')}
+                    title="Speaker View"
+                >
+                    <UserIcon className="h-4 w-4" />
+                </Button>
+                <div className="w-px h-4 bg-border mx-1" />
+                <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                    onClick={toggleFullscreen}
+                    title={isIdeFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                >
+                    {isIdeFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+                </Button>
+            </div>
+            <Button variant="outline" size="sm" className="h-8 relative" onClick={() => setIsChatOpen(!isChatOpen)}>
+              <MessageSquare className="mr-2 h-4 w-4" /> 
+              Chat
+              <Badge className="absolute -top-2 -right-2 h-4 w-4 p-0 flex items-center justify-center bg-indigo-500">1</Badge>
+            </Button>
         </div>
       </div>
 
@@ -974,12 +716,11 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                                 </div>
                              </div>
 
-                             <div className="flex-1 min-h-[300px] relative isolate">
+                             <div className="flex-1 min-h-[300px] p-0 relative isolate">
                                 <CodeEditor 
                                     value={code} 
                                     onChange={(val) => setCode(val || "")} 
-                                    defaultLanguage={currentEditorLanguage}
-                                    onCodeSnapshot={(c, lang) => { setCode(c); setCurrentEditorLanguage(lang); }}
+                                    defaultLanguage="javascript" 
                                 />
                              </div>
                           </Card>
@@ -1162,7 +903,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                 size="icon" 
                 className="h-14 w-14 rounded-full shadow-xl hover:bg-red-600 hover:scale-105 transition-all outline-4 outline-red-900/20 shrink-0 mx-2"
                 title="End Interview"
-                onClick={handleEndInterview}
+                onClick={() => setShowReportModal(true)}
               >
                 <PhoneOff className="h-6 w-6" />
               </Button>
@@ -1190,69 +931,53 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, l
                 <p className="text-indigo-200 text-sm mt-1">{formatTime(elapsedTime)} duration</p>
               </div>
             </div>
-              {!liveReport ? (
-              <div className="p-12 flex flex-col items-center justify-center space-y-4">
-                <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
-                  <p className="text-sm font-medium text-muted-foreground animate-pulse">
-                    {isEndingInterview ? "Ending call and preparing report..." : "AI is finalizing your report..."}
-                  </p>
-              </div>
-            ) : (
-              <>
-                  {isPendingLiveReport && (
-                    <div className="px-6 pt-4">
-                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                        Report is still finalizing. You can open it now and it will keep updating.
-                      </div>
-                    </div>
-                  )}
-                <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
-                  {[
-                    { label: "Overall", value: `${liveReport.overallScore}%`, color: "text-primary" },
-                    { label: "Hard Skills", value: `${liveReport.hardSkillsScore}%`, color: "text-blue-500" },
-                    { label: "Soft Skills", value: `${liveReport.softSkillsScore}%`, color: "text-emerald-500" },
-                  ].map((s) => (
-                    <div key={s.label} className="p-4 text-center">
-                      <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-                    </div>
-                  ))}
+            <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
+              {isLoadingReport ? (
+                <div className="col-span-3 p-8 text-center text-muted-foreground flex flex-col items-center justify-center space-y-2">
+                  <div className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm">Analyzing session...</p>
                 </div>
-                <div className="p-6 space-y-3">
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Session Highlights</h3>
-                  <div className="space-y-2">
-                    {liveReport.swot?.strengths?.slice(0, 2).map((s: string, i: number) => (
-                      <div key={i} className="flex items-start gap-3 text-sm bg-muted/40 rounded-lg px-3 py-2.5">
-                        <span className="text-base shrink-0">✅</span>
-                        <span className="text-foreground/80">{s}</span>
-                      </div>
-                    ))}
-                    {liveReport.swot?.weaknesses?.slice(0, 1).map((s: string, i: number) => (
-                      <div key={i} className="flex items-start gap-3 text-sm bg-muted/40 rounded-lg px-3 py-2.5">
-                        <span className="text-base shrink-0">💡</span>
-                        <span className="text-foreground/80">{s}</span>
-                      </div>
-                    ))}
+              ) : (
+                [
+                  { label: "Overall", value: modalReportData ? `${modalReportData.overallScore}%` : "--", color: "text-primary" },
+                  { label: "Hard Skills", value: modalReportData ? `${modalReportData.hardSkillsScore}%` : "--", color: "text-blue-500" },
+                  { label: "Soft Skills", value: modalReportData ? `${modalReportData.softSkillsScore}%` : "--", color: "text-emerald-500" },
+                ].map((s) => (
+                  <div key={s.label} className="p-4 text-center">
+                    <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
                   </div>
-                </div>
-              </>
-            )}
+                ))
+              )}
+            </div>
+            <div className="p-6 space-y-3">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Session Highlights</h3>
+              <div className="space-y-2">
+                {isLoadingReport ? (
+                  <div className="space-y-2">
+                    <div className="h-10 bg-muted/40 rounded-lg animate-pulse" />
+                    <div className="h-10 bg-muted/40 rounded-lg animate-pulse" />
+                  </div>
+                ) : (
+                  (modalReportData?.highlights?.slice(0, 3) || []).map((text: string, i: number) => (
+                    <div key={i} className="flex items-start gap-3 text-sm bg-muted/40 rounded-lg px-3 py-2.5">
+                      <span className="text-base shrink-0">✨</span>
+                      <span className="text-foreground/80">{text}</span>
+                    </div>
+                  ))
+                )}
+                {!isLoadingReport && (!modalReportData?.highlights || modalReportData.highlights.length === 0) && (
+                  <div className="flex items-start gap-3 text-sm bg-muted/40 rounded-lg px-3 py-2.5">
+                    <span className="text-foreground/80">No highlights available yet.</span>
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex gap-3 px-6 pb-6">
               <Button variant="outline" className="flex-1" onClick={() => { setShowReportModal(false); window.location.href = "/"; }}>
                 Leave Session
               </Button>
-              <Button
-                disabled={!liveReport && !sessionDbData?.id}
-                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white"
-                onClick={() => {
-                  const reportId = String(liveReport?.id || "");
-                  const targetId = reportId && !reportId.startsWith("rep_pending_")
-                    ? reportId
-                    : (sessionDbData?.id || "latest");
-                  setShowReportModal(false);
-                  window.location.href = `/report/${targetId}`;
-                }}
-              >
+              <Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => { setShowReportModal(false); window.location.href = `/report/${sessionId || 'latest'}`; }}>
                 <FileText className="mr-2 h-4 w-4" />
                 View Full Report
                 <ArrowRight className="ml-2 h-4 w-4" />
@@ -1280,9 +1005,3 @@ function LiveKitScreenShare() {
 
   return <VideoTrack trackRef={trackRef} className="w-full h-full object-contain absolute inset-0 z-10 bg-black" />;
 }
-
-
-
-
-
-

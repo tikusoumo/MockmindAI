@@ -12,7 +12,7 @@ import {
 @Injectable()
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
-  private readonly pendingTimeoutSeconds = Number(process.env.REPORT_PENDING_TIMEOUT_SECONDS || 90);
+  private readonly pendingTimeoutSeconds = Number(process.env.REPORT_PENDING_TIMEOUT_SECONDS || 600);
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -58,14 +58,21 @@ export class ReportsService {
    */
   async getLatestReport(): Promise<ReportResponseDto> {
     this.logger.log('Fetching latest report');
-    const existing = await this.prisma.report.findFirst({
+    const recentReports = await this.prisma.report.findMany({
         orderBy: { date: 'desc' },
+        take: 50,
         include: { questions: true, transcripts: true }
     });
-    if (!existing) {
+
+    if (recentReports.length === 0) {
       throw new NotFoundException('No reports found');
     }
-    return this.mapPrismaToDto(existing);
+
+    const preferred =
+      recentReports.find((r) => !this.isTimeoutFallbackReportRecord(r)) ||
+      recentReports[0];
+
+    return this.mapPrismaToDto(preferred);
   }
 
   /**
@@ -126,14 +133,21 @@ export class ReportsService {
     const reports = await this.prisma.report.findMany({
         where: condition as any,
         orderBy: { date: 'desc' },
-        include: { session: { select: { title: true } } }
+        include: {
+          session: { select: { title: true } },
+          transcripts: { select: { speaker: true, text: true } },
+        }
     });
 
     if (reports.length === 0) {
         return [];
     }
 
-    return reports.map(r => ({
+    const visibleReports = reports.filter(
+      (r) => !this.isTimeoutFallbackReportRecord(r),
+    );
+
+    return visibleReports.map(r => ({
         id: r.id,
         date: r.date.toISOString(),
         overallScore: r.overallScore,
@@ -177,6 +191,9 @@ export class ReportsService {
     const resources = payload.resources ?? [];
     const questionsPayload = payload.questions ?? payload.question_evaluations ?? [];
     const transcriptPayload = payload.transcript ?? payload.transcripts ?? [];
+    const overallScore = Number(payload.overallScore ?? payload.overall_score ?? 0);
+    const hardSkillsScore = Number(payload.hardSkillsScore ?? payload.hard_skills_score ?? 0);
+    const softSkillsScore = Number(payload.softSkillsScore ?? payload.soft_skills_score ?? 0);
 
     try {
         // Find existing session to link against
@@ -195,10 +212,10 @@ export class ReportsService {
         await this.prisma.report.create({
             data: {
                 sessionId: session.id,
-                overallScore: payload.overallScore || 0,
+            overallScore,
                 duration: payload.duration || '00:00',
-                hardSkillsScore: payload.hardSkillsScore || 0,
-                softSkillsScore: payload.softSkillsScore || 0,
+            hardSkillsScore,
+            softSkillsScore,
             radarData,
             timelineData,
             fillerWordsAnalysis,
@@ -263,6 +280,15 @@ export class ReportsService {
   }
 
   private mapPrismaToDto(r: any): ReportResponseDto {
+      const fallbackAudioUrl = r?.sessionId
+        ? `http://localhost:8000/public/recordings/${r.sessionId}-recording.mp4`
+        : null;
+
+      const mappedQuestions = (r.questions || []).map((q: any) => ({
+        ...q,
+        audioUrl: q.audioUrl || fallbackAudioUrl,
+      }));
+
       return {
           id: r.id,
           date: r.date.toISOString(),
@@ -272,7 +298,7 @@ export class ReportsService {
           softSkillsScore: r.softSkillsScore,
         radarData: r.radarData || [],
         timelineData: r.timelineData || [],
-          questions: r.questions || [],
+          questions: mappedQuestions,
           transcript: r.transcripts || [],
         fillerWordsAnalysis: r.fillerWordsAnalysis || [],
         pacingAnalysis: r.pacingAnalysis || [],
@@ -384,6 +410,26 @@ export class ReportsService {
       },
       resources: [],
     };
+  }
+
+  private isTimeoutFallbackReportRecord(report: {
+    overallScore?: number;
+    transcripts?: Array<{ speaker?: string; text?: string }>;
+  }): boolean {
+    if (Number(report?.overallScore ?? 0) !== 0) {
+      return false;
+    }
+
+    const transcripts = report?.transcripts || [];
+    if (!Array.isArray(transcripts) || transcripts.length === 0) {
+      return false;
+    }
+
+    return transcripts.some(
+      (entry) =>
+        typeof entry?.text === 'string' &&
+        /timed out|fallback report/i.test(entry.text),
+    );
   }
 
   /**

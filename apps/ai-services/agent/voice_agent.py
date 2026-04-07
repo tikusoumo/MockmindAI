@@ -12,16 +12,18 @@ Features:
 """
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import io
 import json
 import logging
-import asyncio
-import io
-import wave
+import os
+import re
+import threading
+import urllib.request
 import uuid
+import wave
 from typing import Any
-import importlib
-
-import requests
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -36,25 +38,225 @@ from livekit.agents import (
     function_tool,
     RunContext,
 )
+from livekit.agents import llm as lk_llm
 from livekit.agents import tts as lk_tts
-from livekit.plugins import silero, openai
+from livekit.plugins import silero, openai, deepgram, google, groq, elevenlabs
+import requests
 
 from .settings import settings
 from .session_collector import SessionCollector
-try:
-    from .rag.vector_store import get_vector_store
-except Exception:
-    class _FallbackVectorStore:
-        async def query_for_interview(self, interview_id: str, query: str):
-            return []
-
-    def get_vector_store():
-        logger.warning("RAG module unavailable. Using fallback empty vector store.")
-        return _FallbackVectorStore()
 
 logger = logging.getLogger("voice-agent")
 
 load_dotenv()
+
+_RAG_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+
+
+def _collect_text_content(content: Any) -> str:
+    """Extract plain text from SDK message content variants."""
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            else:
+                text = getattr(item, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return " ".join(parts)
+
+    return str(content or "")
+
+
+def _compact_text(value: str, max_chars: int) -> str:
+    """Normalize whitespace and cap text length conservatively."""
+    normalized = re.sub(r"\s+", " ", value).strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    clipped = normalized[:max_chars].rsplit(" ", 1)[0]
+    return (clipped or normalized[:max_chars]) + " ..."
+
+
+def _cap_context_chunks(
+    chunks: list[str],
+    *,
+    max_chunks: int,
+    chunk_max_chars: int,
+    total_max_chars: int,
+) -> list[str]:
+    """Bound context size before injecting into prompts."""
+    limited: list[str] = []
+    current_size = 0
+
+    for raw in chunks:
+        if len(limited) >= max_chunks:
+            break
+
+        compact = _compact_text(raw, chunk_max_chars)
+        if not compact:
+            continue
+
+        projected = current_size + len(compact)
+        if limited:
+            projected += len("\n---\n")
+
+        if projected > total_max_chars:
+            break
+
+        limited.append(compact)
+        current_size = projected
+
+    return limited
+
+
+_DOC_CONTEXT_BLOCK_RE = re.compile(
+    r"\[DOCUMENTS / CONTEXT PROVIDED\].*?\[END CONTEXT\]\s*",
+    flags=re.DOTALL,
+)
+
+
+def _clone_chat_item(item: Any) -> Any:
+    """Create a deep clone when supported to avoid mutating persistent chat history."""
+    if hasattr(item, "model_copy"):
+        try:
+            return item.model_copy(deep=True)
+        except Exception:
+            pass
+
+    if hasattr(item, "copy"):
+        try:
+            return item.copy(deep=True)
+        except Exception:
+            pass
+
+    return item
+
+
+def _strip_injected_doc_context(value: str) -> str:
+    """Remove previously injected doc context so it does not snowball across turns."""
+    if "[DOCUMENTS / CONTEXT PROVIDED]" not in value or "[END CONTEXT]" not in value:
+        return value
+
+    cleaned = _DOC_CONTEXT_BLOCK_RE.sub("", value).strip()
+    if cleaned.startswith("Question / Speech:"):
+        cleaned = cleaned.split(":", 1)[1].strip()
+    return cleaned or value
+
+
+def _extract_context_items(chat_ctx: Any) -> list[Any]:
+    """Read context items across SDK variants (`items` or legacy `messages`)."""
+    items_obj = getattr(chat_ctx, "items", None)
+    if callable(items_obj):
+        items_obj = items_obj()
+
+    if items_obj is None:
+        items_obj = getattr(chat_ctx, "messages", None)
+        if callable(items_obj):
+            items_obj = items_obj()
+
+    if items_obj is None:
+        return []
+
+    if isinstance(items_obj, list):
+        return items_obj
+
+    try:
+        return list(items_obj)
+    except TypeError:
+        return []
+
+
+class _KokoroChunkedStream(lk_tts.ChunkedStream):
+    def __init__(
+        self,
+        *,
+        tts: "LocalKokoroTTS",
+        input_text: str,
+        conn_options: APIConnectOptions,
+    ) -> None:
+        super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
+        self._kokoro_tts = tts
+
+    async def _run(self, output_emitter: lk_tts.AudioEmitter) -> None:
+        text = _compact_text(self.input_text.strip(), 1000)
+        if not text:
+            return
+
+        payload = {
+            "model": self._kokoro_tts.model,
+            "input": text,
+            "voice": self._kokoro_tts.voice,
+            "response_format": "wav",
+        }
+
+        response = await asyncio.to_thread(
+            requests.post,
+            f"{self._kokoro_tts.base_url}/audio/speech",
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+
+        with io.BytesIO(response.content) as wav_io:
+            with wave.open(wav_io, "rb") as wav_file:
+                sample_rate = wav_file.getframerate()
+                num_channels = wav_file.getnchannels()
+                pcm_bytes = wav_file.readframes(wav_file.getnframes())
+
+        output_emitter.initialize(
+            request_id=f"kokoro-{uuid.uuid4().hex[:8]}",
+            sample_rate=sample_rate,
+            num_channels=num_channels,
+            mime_type="audio/pcm",
+        )
+        output_emitter.push(pcm_bytes)
+
+
+class LocalKokoroTTS(lk_tts.TTS):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str = "kokoro",
+        voice: str = "af_sky",
+        sample_rate: int = 24000,
+        num_channels: int = 1,
+    ) -> None:
+        super().__init__(
+            capabilities=lk_tts.TTSCapabilities(streaming=False),
+            sample_rate=sample_rate,
+            num_channels=num_channels,
+        )
+        self.base_url = base_url.rstrip("/")
+        self._model = model
+        self.voice = voice
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def provider(self) -> str:
+        return "kokoro-local"
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+    ) -> lk_tts.ChunkedStream:
+        return _KokoroChunkedStream(tts=self, input_text=text, conn_options=conn_options)
+
+    async def aclose(self) -> None:
+        return
 
 
 class InterviewCoach(Agent):
@@ -66,11 +268,16 @@ class InterviewCoach(Agent):
         template_id: str | None = None,
         template_title: str = "",
         collector: SessionCollector | None = None,
+        session_id: str | None = None,
     ) -> None:
         # Build instructions based on mode
         base_instructions = """You are a professional AI interview coach assistant. You help users practice for job interviews.
             Your responses should be without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            Keep your responses concise and natural for voice conversation."""
+            Keep your responses concise and natural for voice conversation.
+            
+            IMPORTANT: You have access to a tool called `request_document_context`. 
+            ALWAYS use this tool to fetch the candidate's uploaded resume or provided job documentation to tailor your questions and evaluation. 
+            When the candidate mentions their experience or you want to ask relevant questions, explicitly call `request_document_context` with a relevant query to look up details from their uploaded documents."""
         
         if mode == "learning":
             mode_instructions = """
@@ -97,7 +304,7 @@ class InterviewCoach(Agent):
         
         self.mode = mode
         self.template_id = template_id
-        self.session_id = None
+        self.session_id = session_id
         self.template_title = template_title
         self.collector = collector
         self.current_question_idx = 0
@@ -175,41 +382,53 @@ class InterviewCoach(Agent):
         Args:
             query: The specific topic or detail you need to find in their document (e.g., 'Python experience', 'education').
         """
-        if not self.template_id and not self.session_id:
-            return "No document context is available in this session."
+        from .rag.vector_store import get_vector_store
 
         store = get_vector_store()
         try:
-            all_results = []
-            
-            if self.session_id:
-                try:
-                    session_results = await store.query_for_interview(f"session_{self.session_id}", query)
-                    if session_results:
-                        all_results.extend(session_results)
-                except Exception as e:
-                    logger.error(f"Failed to query session documents: {e}")
-                    
+            # Query both the template (if applicable) and this specific session's uploaded docs
+            results = []
             if self.template_id:
-                try:
-                    template_results = await store.query_for_interview(self.template_id, query)
-                    if template_results:
-                        all_results.extend(template_results)
-                except Exception as e:
-                    logger.error(f"Failed to query template documents: {e}")
-
-            if not all_results:
+                template_results = await store.query_for_interview(self.template_id, query)
+                if template_results:
+                   results.extend(template_results)
+                   
+            # Also check user uploads bound strictly to this session
+            if self.session_id:
+               session_results = await store.query_for_interview(self.session_id, query)
+               # Fallback legacy lookup just in case
+               session_legacy_results = await store.query_for_interview(f"session_{self.session_id}", query)
+               if session_results:
+                   results.extend(session_results)
+               if session_legacy_results:
+                   results.extend(session_legacy_results)
+                   
+            if not results:
                 return "I couldn't find any relevant information about that in the uploaded documents."
-            return "\n\n".join(all_results)
+
+            limited_results = _cap_context_chunks(
+                results,
+                max_chunks=settings.rag_injected_chunks,
+                chunk_max_chars=settings.rag_chunk_max_chars,
+                total_max_chars=settings.rag_context_max_chars,
+            )
+            if not limited_results:
+                return "I found relevant documents but they were too large to include directly. Please ask a more specific question."
+
+            return "\n\n".join(limited_results)
         except Exception as e:
             logger.error(f"Failed to query RAG: {e}")
             return "Failed to retrieve document context at this moment."
 
 server = AgentServer(
+    # Keep the process pool small in containerized runs.
     num_idle_processes=settings.livekit_num_idle_processes,
     initialize_process_timeout=settings.livekit_initialize_process_timeout,
     job_memory_warn_mb=settings.livekit_job_memory_warn_mb,
     job_memory_limit_mb=settings.livekit_job_memory_limit_mb,
+    ws_url=settings.livekit_url,
+    api_key=settings.livekit_api_key,
+    api_secret=settings.livekit_api_secret,
 )
 
 
@@ -218,216 +437,177 @@ def prewarm(proc: JobProcess):
     logger.info("Prewarming agent resources...")
     proc.userdata["vad"] = silero.VAD.load()
 
+    def _prewarm_rag_embedder() -> None:
+        try:
+            from .rag.vector_store import get_vector_store
+
+            _ = get_vector_store().embedder
+            logger.info("Prewarmed RAG embedder")
+        except Exception as e:
+            logger.warning("Failed to prewarm RAG embedder: %s", e)
+
+    if settings.rag_prewarm_embedder:
+        threading.Thread(target=_prewarm_rag_embedder, name="rag-prewarm", daemon=True).start()
+
 
 server.setup_fnc = prewarm
 
 
-class _KokoroChunkedStream(lk_tts.ChunkedStream):
-    def __init__(
-        self,
-        *,
-        tts: "LocalKokoroTTS",
-        input_text: str,
-        conn_options: APIConnectOptions,
-    ) -> None:
-        super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
-        self._kokoro_tts = tts
-
-    async def _run(self, output_emitter: lk_tts.AudioEmitter) -> None:
-        text = self.input_text.strip()
-        if not text:
-            return
-
-        payload = {
-            "model": self._kokoro_tts.model,
-            "input": text,
-            "voice": self._kokoro_tts.voice,
-            "response_format": "wav",
-        }
-
-        # Use a thread to avoid blocking the event loop on HTTP I/O.
-        response = await asyncio.to_thread(
-            requests.post,
-            f"{self._kokoro_tts.base_url}/audio/speech",
-            json=payload,
-            timeout=20,
-        )
-        response.raise_for_status()
-
-        with io.BytesIO(response.content) as wav_io:
-            with wave.open(wav_io, "rb") as wav_file:
-                sample_rate = wav_file.getframerate()
-                num_channels = wav_file.getnchannels()
-                pcm_bytes = wav_file.readframes(wav_file.getnframes())
-
-        output_emitter.initialize(
-            request_id=f"kokoro-{uuid.uuid4().hex[:8]}",
-            sample_rate=sample_rate,
-            num_channels=num_channels,
-            mime_type="audio/pcm",
-        )
-        output_emitter.push(pcm_bytes)
-
-
-class LocalKokoroTTS(lk_tts.TTS):
-    def __init__(
-        self,
-        *,
-        base_url: str,
-        model: str = "kokoro",
-        voice: str = "af_sky",
-        sample_rate: int = 24000,
-        num_channels: int = 1,
-    ) -> None:
-        super().__init__(
-            capabilities=lk_tts.TTSCapabilities(streaming=False),
-            sample_rate=sample_rate,
-            num_channels=num_channels,
-        )
-        self.base_url = base_url.rstrip("/")
-        self._model = model
-        self.voice = voice
-
-    @property
-    def model(self) -> str:
-        return self._model
-
-    @property
-    def provider(self) -> str:
-        return "kokoro-local"
-
-    def synthesize(
-        self,
-        text: str,
-        *,
-        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
-    ) -> lk_tts.ChunkedStream:
-        return _KokoroChunkedStream(tts=self, input_text=text, conn_options=conn_options)
-
-    async def aclose(self) -> None:
-        return
-
-
 def create_model_components(settings):
     """Factory to create LLM, STT, and TTS instances with support for mixing local and online providers."""
-    def s(name: str, default=None):
-        return getattr(settings, name, default)
+    def _normalize_local_url(url: str) -> str:
+        # Inside Docker, localhost points to the current container; use host gateway instead.
+        if url and os.path.exists("/.dockerenv") and "localhost" in url:
+            return url.replace("localhost", "host.docker.internal")
+        return url
 
-    stt_provider = s("stt_provider", "openai")
-    llm_provider = s("llm_provider", "openai")
-    tts_provider = s("tts_provider", "openai")
-    use_local_ai = s("use_local_ai", True)
+    def _has_google_credentials() -> bool:
+        if settings.google_credentials_file:
+            return True
 
-    whisper_base_url = s("whisper_base_url", "http://whisper:80/v1")
-    llama_base_url = s("llama_base_url", "http://llama_cpp:11434/v1")
-    llama_model = s("llama_model", "qwen3-4b")
-    kokoro_base_url = s("kokoro_base_url", "http://kokoro:8880/v1")
+        # Detect ADC availability for environments where GOOGLE_APPLICATION_CREDENTIALS is not explicitly set.
+        try:
+            import importlib
 
-    google_api_key = s("google_api_key")
-    google_credentials_file = s("google_credentials_file")
-    groq_api_key = s("groq_api_key")
-    deepgram_api_key = s("deepgram_api_key")
-    eleven_api_key = s("eleven_api_key")
+            google_auth = importlib.import_module("google.auth")
+            google_auth.default()
+            return True
+        except Exception:
+            return False
 
-    def is_local_target(base_url: str | None, host_hint: str) -> bool:
-        return bool(use_local_ai or (base_url and ("localhost" in base_url or host_hint in base_url)))
-
-    def openai_stt_fallback():
-        if is_local_target(whisper_base_url, "whisper"):
+    def _openai_stt_fallback():
+        whisper_url = _normalize_local_url(settings.whisper_base_url)
+        if settings.use_local_ai or (
+            whisper_url
+            and (
+                "localhost" in whisper_url
+                or "whisper" in whisper_url
+                or "host.docker.internal" in whisper_url
+            )
+        ):
             return openai.STT(
-                base_url=whisper_base_url,
+                base_url=whisper_url,
                 model="Systran/faster-whisper-small",
                 api_key="no-key-needed",
             )
         return openai.STT(model="whisper-1")
 
-    def openai_llm_fallback():
-        if is_local_target(llama_base_url, "llama"):
-            return openai.LLM(base_url=llama_base_url, model=llama_model, api_key="no-key-needed")
+    def _openai_llm_fallback():
+        llama_url = _normalize_local_url(settings.llama_base_url)
+        if settings.use_local_ai or (
+            llama_url
+            and (
+                "localhost" in llama_url
+                or "llama" in llama_url
+                or "host.docker.internal" in llama_url
+            )
+        ):
+            return openai.LLM(
+                base_url=llama_url,
+                model=settings.llama_model,
+                api_key="no-key-needed",
+            )
         return openai.LLM(model="gpt-4o")
 
-    def openai_tts_fallback():
-        if is_local_target(kokoro_base_url, "kokoro"):
-            return LocalKokoroTTS(base_url=kokoro_base_url, model="kokoro", voice="af_sky")
+    def _openai_tts_fallback():
+        kokoro_url = _normalize_local_url(settings.kokoro_base_url)
+        if settings.use_local_ai or (
+            kokoro_url
+            and (
+                "localhost" in kokoro_url
+                or "kokoro" in kokoro_url
+                or "host.docker.internal" in kokoro_url
+            )
+        ):
+            return LocalKokoroTTS(base_url=kokoro_url, model="kokoro", voice="af_sky")
         return openai.TTS(model="tts-1", voice="alloy")
 
-    def load_optional_plugin(module_name: str):
-        try:
-            return importlib.import_module(module_name)
-        except Exception:
-            logger.warning(f"Optional LiveKit plugin unavailable: {module_name}. Falling back.")
-            return None
+    def _google_api_key_looks_usable(api_key: str | None) -> bool:
+        if not api_key:
+            return False
 
-    google = load_optional_plugin("livekit.plugins.google")
-    deepgram = load_optional_plugin("livekit.plugins.deepgram")
-    groq = load_optional_plugin("livekit.plugins.groq")
-    elevenlabs = load_optional_plugin("livekit.plugins.elevenlabs")
-    
-    # --- STT ---
-    if stt_provider == "deepgram" and deepgram:
-        stt = deepgram.STT(api_key=deepgram_api_key)
-    elif stt_provider == "google" and google:
-        # Google STT requires service-account credentials for gRPC.
-        if google_credentials_file:
-            stt = google.STT(credentials_file=google_credentials_file)
-        else:
-            logger.warning(
-                "Google STT selected but GOOGLE_CREDENTIALS_FILE is missing. Falling back to OpenAI-compatible STT."
+        # Fast preflight to avoid runtime job crashes on expired/invalid Gemini API keys.
+        try:
+            req = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                method="GET",
             )
-            stt = openai_stt_fallback()
-    elif stt_provider == "groq" and groq:
-        stt = groq.STT(api_key=groq_api_key)
-    elif stt_provider == "openai":
-        stt = openai_stt_fallback()
-    else: # Default
-        stt = (
-            google.STT(credentials_file=google_credentials_file)
-            if (google and google_credentials_file)
-            else openai_stt_fallback()
+            with urllib.request.urlopen(req, timeout=5) as response:
+                return 200 <= response.status < 300
+        except Exception:
+            return False
+
+    stt_provider = settings.stt_provider
+    llm_provider = settings.llm_provider
+    tts_provider = settings.tts_provider
+
+    if settings.use_local_ai:
+        stt_provider = "openai"
+        llm_provider = "openai"
+        tts_provider = "openai"
+        logger.info(
+            "USE_LOCAL_AI is enabled. Routing STT/LLM/TTS to OpenAI-compatible local endpoints."
         )
+
+    # --- STT ---
+    try:
+        if stt_provider == "deepgram":
+            stt = deepgram.STT(api_key=settings.deepgram_api_key)
+        elif stt_provider == "google":
+            # Google STT needs service account credentials or ADC.
+            if not _has_google_credentials():
+                raise ValueError("Google STT requires credentials_file or ADC")
+            stt = google.STT(credentials_file=settings.google_credentials_file) if settings.google_credentials_file else google.STT()
+        elif stt_provider == "groq":
+            stt = groq.STT(api_key=settings.groq_api_key)
+        else:
+            stt = _openai_stt_fallback()
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize STT provider '%s' (%s). Falling back to OpenAI-compatible STT.",
+            stt_provider,
+            e,
+        )
+        stt = _openai_stt_fallback()
 
     # --- LLM ---
-    if llm_provider == "google" and google:
-        if google_api_key:
-            llm = google.LLM(model="gemini-2.0-flash-exp", api_key=google_api_key)
+    try:
+        if llm_provider == "google":
+            if not _google_api_key_looks_usable(settings.google_api_key):
+                raise ValueError("Google LLM API key is missing, invalid, or expired")
+            llm = google.LLM(model="gemini-2.0-flash-exp", api_key=settings.google_api_key)
+        elif llm_provider == "groq":
+            llm = groq.LLM(model="llama3-8b-8192", api_key=settings.groq_api_key)
         else:
-            logger.warning(
-                "Google LLM selected but GOOGLE_API_KEY is missing. Falling back to OpenAI-compatible LLM."
-            )
-            llm = openai_llm_fallback()
-    elif llm_provider == "groq" and groq:
-        llm = groq.LLM(model="llama3-8b-8192", api_key=groq_api_key)
-    elif llm_provider == "openai":
-        llm = openai_llm_fallback()
-    else:
-        llm = (
-            google.LLM(model="gemini-2.0-flash-exp", api_key=google_api_key)
-            if (google and google_api_key)
-            else openai_llm_fallback()
+            llm = _openai_llm_fallback()
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize LLM provider '%s' (%s). Falling back to OpenAI-compatible LLM.",
+            llm_provider,
+            e,
         )
+        llm = _openai_llm_fallback()
 
     # --- TTS ---
-    if tts_provider == "elevenlabs" and elevenlabs:
-        tts = elevenlabs.TTS(api_key=eleven_api_key)
-    elif tts_provider == "deepgram" and deepgram:
-        tts = deepgram.TTS(api_key=deepgram_api_key)
-    elif tts_provider == "google" and google:
-        # Google TTS also requires service-account credentials for gRPC.
-        if google_credentials_file:
-            tts = google.TTS(credentials_file=google_credentials_file)
+    try:
+        if tts_provider == "elevenlabs":
+            tts = elevenlabs.TTS(api_key=settings.eleven_api_key)
+        elif tts_provider == "deepgram":
+            tts = deepgram.TTS(api_key=settings.deepgram_api_key)
+        elif tts_provider == "google":
+            # Google TTS needs service account credentials or ADC.
+            if not _has_google_credentials():
+                raise ValueError("Google TTS requires credentials_file or ADC")
+            tts = google.TTS(credentials_file=settings.google_credentials_file) if settings.google_credentials_file else google.TTS()
         else:
-            logger.warning(
-                "Google TTS selected but GOOGLE_CREDENTIALS_FILE is missing. Falling back to OpenAI-compatible TTS."
-            )
-            tts = openai_tts_fallback()
-    elif tts_provider == "openai":
-         tts = openai_tts_fallback()
-    else:
-        tts = (
-            google.TTS(credentials_file=google_credentials_file)
-            if (google and google_credentials_file)
-            else openai_tts_fallback()
+            tts = _openai_tts_fallback()
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize TTS provider '%s' (%s). Falling back to OpenAI-compatible TTS.",
+            tts_provider,
+            e,
         )
+        tts = _openai_tts_fallback()
 
     return stt, llm, tts
 
@@ -466,38 +646,215 @@ async def voice_agent(ctx: JobContext):
     
     mode = metadata.get("mode", "strict")
     template_id = metadata.get("templateId")
-    session_id = metadata.get("sessionId")
-    if not session_id and ctx.room.name.startswith("interview-"):
-        session_id = ctx.room.name.replace("interview-", "", 1)
+    session_id = template_id # Using template_id as session id to match the FE assignment logic
+    if ctx.room.name.startswith("interview-"):
+       session_id = ctx.room.name.replace("interview-", "")
     template_title = metadata.get("templateTitle", "Interview")
     participant_name = metadata.get("participantName", "Candidate")
-
-    logger.info(f"Interview mode: {mode}, template: {template_title}")
+    
+    logger.info(f"Interview mode: {mode}, session/template: {session_id}, template title: {template_title}")
 
     # Initialize session collector
     collector = SessionCollector(
         room_name=ctx.room.name,
-        template_id=template_id,
+        template_id=session_id,  # Bind collector tightly to session output
         template_title=template_title,
         mode=mode,
         participant_name=participant_name,
     )
 
-    logger.info(
-        f"Using Providers -> LLM: {getattr(settings, 'llm_provider', 'openai')}, "
-        f"STT: {getattr(settings, 'stt_provider', 'openai')}, "
-        f"TTS: {getattr(settings, 'tts_provider', 'openai')}"
-    )
+    logger.info(f"Using Providers -> LLM: {settings.llm_provider}, STT: {settings.stt_provider}, TTS: {settings.tts_provider}")
 
     stt, llm, tts = create_model_components(settings)
+    logger.info(
+        "Resolved Runtime Providers -> LLM: %s.%s, STT: %s.%s, TTS: %s.%s",
+        type(llm).__module__,
+        type(llm).__name__,
+        type(stt).__module__,
+        type(stt).__name__,
+        type(tts).__module__,
+        type(tts).__name__,
+    )
+
+    # --- PROACTIVE RAG INTERCEPTOR ---
+    # Intercept LLM chat requests to inject uploaded documents directly into context.
+    # This bypasses the need for the LLM backend (e.g. Local LLM / Gemini) to correctly invoke the function calling tool API.
+    
+    # Define a wrapper for the chat method that handles the async nature of LLMStream
+    original_chat = llm.chat
+    
+    def intercepted_chat(_bound_llm, *args, **kwargs):
+        chat_ctx = kwargs.get("chat_ctx")
+        args_list = list(args)
+        chat_ctx_in_args = False
+
+        if chat_ctx is None and args_list:
+            maybe_ctx = args_list[0]
+            if hasattr(maybe_ctx, "items") or hasattr(maybe_ctx, "messages"):
+                chat_ctx = maybe_ctx
+                chat_ctx_in_args = True
+
+        if chat_ctx:
+            try:
+                # Keep only relevant recent message items and skip bulky tool-call traces.
+                working_ctx = chat_ctx.copy(
+                    exclude_empty_message=True,
+                    exclude_function_call=True,
+                )
+                working_ctx.truncate(max_items=settings.llm_chat_max_items)
+
+                raw_items = _extract_context_items(working_ctx)
+                if not raw_items:
+                    return original_chat(*args, **kwargs)
+
+                # Deep-clone message items. ChatContext.copy() is shallow and shares item objects.
+                cloned_items = [_clone_chat_item(item) for item in raw_items]
+                sanitized_context_items = 0
+
+                for item in cloned_items:
+                    if getattr(item, "type", "message") != "message":
+                        continue
+                    if getattr(item, "role", None) != "user":
+                        continue
+
+                    original_content = _collect_text_content(getattr(item, "content", ""))
+                    cleaned_content = _strip_injected_doc_context(original_content)
+                    if cleaned_content != original_content:
+                        item.content = cleaned_content
+                        sanitized_context_items += 1
+
+                # Rebuild context from cloned items so downstream edits never touch persistent state.
+                working_ctx = lk_llm.ChatContext(cloned_items)
+
+                if chat_ctx_in_args:
+                    args_list[0] = working_ctx
+                    args = tuple(args_list)
+                else:
+                    kwargs["chat_ctx"] = working_ctx
+
+                messages = [
+                    item
+                    for item in cloned_items
+                    if getattr(item, "type", "message") == "message"
+                ]
+
+                # Find the actual user message (not just the last one, which might be a tool response)
+                user_msg = None
+                for msg in reversed(messages):
+                    if getattr(msg, "role", None) == "user" and getattr(msg, "content", None):
+                        user_msg = msg
+                        break
+                
+                if user_msg:
+                    query = _collect_text_content(user_msg.content)
+                    query = _compact_text(query, settings.rag_query_max_chars)
+                    if not query:
+                        return original_chat(**kwargs)
+                    
+                    # We need to reach into the vector store
+                    from .rag.vector_store import get_vector_store
+                    
+                    store = get_vector_store()
+                    
+                    results = []
+                    
+                    def lookup(tid):
+                        future = _RAG_EXECUTOR.submit(
+                            store.query_for_interview_sync,
+                            tid,
+                            query,
+                            settings.rag_lookup_k,
+                        )
+                        try:
+                            chunks = future.result(timeout=settings.rag_lookup_timeout_seconds)
+                        except FutureTimeoutError:
+                            logger.warning(
+                                "Qdrant RAG lookup timed out for target '%s' after %.1fs",
+                                tid,
+                                settings.rag_lookup_timeout_seconds,
+                            )
+                            return []
+                        except Exception as rag_err:
+                            logger.warning("Qdrant RAG lookup failed for target '%s': %s", tid, rag_err)
+                            return []
+
+                        logger.info("Qdrant RAG: Found %d hits for target '%s'", len(chunks), tid)
+                        return chunks
+                        
+                    # Check templates and sessions
+                    logger.info("Proactive RAG intercept triggered. Query: %s", query)
+                    found_context = False
+                    
+                    if template_id:
+                        res = lookup(template_id)
+                        if res:
+                            results.extend(res)
+                            found_context = True
+                            
+                    if session_id and session_id != template_id:
+                        res = lookup(session_id)
+                        if res:
+                            results.extend(res)
+                            found_context = True
+                        
+                    if not found_context and session_id:
+                        res = lookup(f"session_{session_id}")
+                        if res:
+                            results.extend(res)
+                    
+                    # Deduplicate
+                    unique_results = []
+                    for r in results:
+                        if r not in unique_results:
+                            unique_results.append(r)
+                            
+                    if unique_results:
+                        limited_results = _cap_context_chunks(
+                            unique_results,
+                            max_chunks=settings.rag_injected_chunks,
+                            chunk_max_chars=settings.rag_chunk_max_chars,
+                            total_max_chars=settings.rag_context_max_chars,
+                        )
+                        if limited_results:
+                            context_str = "\n---\n".join(limited_results)
+                            augmented_prompt = (
+                                f"[DOCUMENTS / CONTEXT PROVIDED]\n{context_str}\n[END CONTEXT]\n\n"
+                                f"Question / Speech: {query}"
+                            )
+                            user_msg.content = augmented_prompt
+                            logger.info("Injected %d proactive RAG chunks into prompt.", len(limited_results))
+                        else:
+                            logger.info("Proactive RAG skipped injection due to prompt budget limits.")
+                    else:
+                        logger.info(
+                            "Proactive RAG found zero chunks for query '%s' (target IDs: %s, %s)",
+                            query,
+                            template_id,
+                            session_id,
+                        )
+
+                if sanitized_context_items:
+                    logger.debug(
+                        "Proactive RAG sanitized %d previously injected context messages.",
+                        sanitized_context_items,
+                    )
+                        
+            except Exception as e:
+                logger.error(f"Failed proactive RAG injection: {e}")
+                
+        # Call the original chat method
+        # Note: In LiveKit Agents, llm.chat returns an LLMStream which is an async context manager.
+        return original_chat(*args, **kwargs)
+        
+    # Bind the interceptor
+    import types
+    llm.chat = types.MethodType(intercepted_chat, llm)
 
     session = AgentSession(
         stt=stt,
         llm=llm,
         tts=tts,
         vad=ctx.proc.userdata["vad"],
-        # Keep endpointing lightweight in containerized deployments where
-        # turn-detector model assets may not be present.
         preemptive_generation=False, # Disable to prevent premature "speaking" UI state while LLM generates
     )
 
@@ -505,85 +862,35 @@ async def voice_agent(ctx: JobContext):
     agent = InterviewCoach(
         mode=mode,
         template_id=template_id,
+        session_id=session_id,
         template_title=template_title,
         collector=collector,
     )
 
-    agent.session_id = session_id
-
-    @session.on("user_input_transcribed")
-    def on_transcribed(ev):
-        if getattr(ev, "is_final", False) and ev.transcript:
-            collector.add_candidate_message(ev.transcript)
-            logger.info(f"Recorded candidate: {ev.transcript}")
-
-    @session.on("conversation_item_added")
-    def on_chat_added(ev):
-        msg = ev.item
-        if getattr(msg, "role", "") == "assistant":
-            text_val = msg.content if isinstance(msg.content, str) else "".join([getattr(m, "text", "") for m in (msg.content or []) if getattr(m, "type", "") == "text"])
-            if text_val:
-                is_q = "?" in text_val
-                collector.add_interviewer_message(text_val, is_question=is_q)
-                logger.info(f"Recorded interviewer: {text_val}")
-
     await session.start(
-
         agent=agent,
         room=ctx.room,
     )
 
-    finalization_started = False
+    @session.on("user_input_transcribed")
+    def on_user_input_transcribed(ev):
+        transcript = getattr(ev, "transcript", "")
+        is_final = getattr(ev, "is_final", True)
+        if is_final and transcript:
+            collector.add_candidate_message(transcript)
 
-    async def push_session_to_background(trigger: str) -> None:
-        nonlocal finalization_started
-
-        if finalization_started:
-            logger.debug(f"Session finalization already started, skipping trigger={trigger}")
+    @session.on("conversation_item_added")
+    def on_conversation_item_added(ev):
+        item = getattr(ev, "item", None)
+        if not item:
             return
 
-        finalization_started = True
-        logger.info(f"Finalizing session via trigger={trigger}")
+        if getattr(item, "role", "") != "assistant":
+            return
 
-        session_data = collector.end_session()
-        resolved_session_id = session_id or agent.session_id or ctx.room.name
-
-        import aiohttp
-
-        api_url = "http://agent-api:8001/reports/process"
-        payload = {
-            "session_id": resolved_session_id,
-            "session_data": session_data.to_dict(),
-        }
-
-        timeout = aiohttp.ClientTimeout(total=8)
-        max_attempts = 3
-
-        for attempt in range(1, max_attempts + 1):
-            try:
-                async with aiohttp.ClientSession(timeout=timeout) as http_session:
-                    async with http_session.post(api_url, json=payload) as response:
-                        if response.status >= 400:
-                            error_text = await response.text()
-                            raise RuntimeError(f"{response.status} - {error_text}")
-
-                        logger.info(
-                            f"Session data pushed to background processor: status={response.status}, "
-                            f"session_id={resolved_session_id}"
-                        )
-                        return
-            except Exception as e:
-                if attempt >= max_attempts:
-                    logger.error(
-                        f"Failed to push session to background after {max_attempts} attempts: {e}"
-                    )
-                    return
-
-                backoff = 0.5 * attempt
-                logger.warning(
-                    f"Push attempt {attempt}/{max_attempts} failed, retrying in {backoff:.1f}s: {e}"
-                )
-                await asyncio.sleep(backoff)
+        text = _collect_text_content(getattr(item, "content", "")).strip()
+        if text:
+            collector.add_interviewer_message(text, is_question="?" in text)
 
     @ctx.room.on("data_received")
     def on_data_received(data_packet):
@@ -595,20 +902,54 @@ async def voice_agent(ctx: JobContext):
         except Exception as e:
             logger.error(f"Error parsing data channel message: {e}")
 
-    @ctx.room.on("participant_disconnected")
-    def on_participant_disconnected(participant):
-        identity = getattr(participant, "identity", "unknown")
-        logger.info(
-            f"Participant {identity} disconnected. Scheduling background finalization push."
-        )
-        asyncio.create_task(
-            push_session_to_background(f"participant_disconnected:{identity}")
-        )
-
     @ctx.room.on("disconnected")
-    def on_room_disconnected(*_args):
-        logger.info("Room disconnected. Scheduling background finalization push.")
-        asyncio.create_task(push_session_to_background("room_disconnected"))
+    def on_disconnected(*args):
+        logger.info("Room disconnected, generating final report via webhook...")
+        session_data = collector.end_session()
+        
+        # Store it locally just in case
+        try:
+            from .routers.reports import store_session
+            store_session(session_data)
+        except ImportError:
+            pass
+            
+        import asyncio
+        import urllib.request
+        
+        async def push_webhook():
+            try:
+                from .analysis import ReportGenerator
+                generator = ReportGenerator()
+                report = generator.generate(session_data)
+                payload = report.to_dict()
+                payload["session_id"] = session_id
+                payload["sessionId"] = session_id
+                
+                # Use standard library to avoid missing httpx/aiohttp in worker
+                api_url = "http://api:8000/api/reports/webhook"
+                req = urllib.request.Request(
+                    api_url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                
+                # Run in thread so it doesn't block
+                loop = asyncio.get_event_loop()
+                def make_req():
+                    with urllib.request.urlopen(req, timeout=30) as response:
+                        return response.status
+                
+                status = await loop.run_in_executor(None, make_req)
+                logger.info(f"Webhook pushed successfully: {status}")
+            except Exception as e:
+                logger.error(f"Failed to push webhook: {e}")
+                
+        # Fire and forget
+        asyncio.create_task(push_webhook())
+
+    logger.info(f"Connected to room: {ctx.room.name} in {mode} mode")
 
 
 if __name__ == "__main__":

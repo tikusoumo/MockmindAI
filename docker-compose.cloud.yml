@@ -1,21 +1,4 @@
 services:
-  # Redis Queue for Egress
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
-  # Local LiveKit Egress (Burns room audio/video to local file system)
-  egress:
-    image: livekit/egress:latest
-    environment:
-      - EGRESS_CONFIG_FILE=/out/egress.yaml
-    volumes:
-      - ./apps/api/public/recordings:/out
-    depends_on:
-      - livekit
-      - redis
-
   # Database - Required for API
   db:
     image: postgres:16-alpine
@@ -49,11 +32,11 @@ services:
   # LiveKit Server - Real-time communication
   livekit:
     image: livekit/livekit-server:latest
-    command: --dev --bind 0.0.0.0 --udp-port 52000-52100 --redis-host redis:6379
+    command: --dev --bind 0.0.0.0
     ports:
       - "7880:7880"   # WebSocket
       - "7881:7881"   # RTC over TCP
-      - "52000-52100:52000-52100/udp"  # RTC over UDP (avoid Windows excluded UDP range)
+      - "51000-51100:50000-50100/udp"  # RTC over UDP (host range avoids Windows excluded UDP ports)
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
 
@@ -62,7 +45,10 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    command: bun run start:prod
+    command: bun run start:dev
+    volumes:
+      - ./apps/api:/usr/src/app/apps/api
+      - /usr/src/app/apps/api/node_modules
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://app:app@db:5432/voice_agent}
       PORT: 8000
@@ -71,7 +57,6 @@ services:
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
-      REPORT_PENDING_TIMEOUT_SECONDS: ${REPORT_PENDING_TIMEOUT_SECONDS:-90}
     ports:
       - "8000:8000"
     depends_on:
@@ -85,21 +70,13 @@ services:
     build:
       context: .
       dockerfile: apps/ai-services/Dockerfile
-      args:
-        PRELOAD_MODELS: ${PRELOAD_MODELS:-0}
     environment:
       APP_ENV: ${APP_ENV:-dev}
-      USE_LOCAL_AI: ${USE_LOCAL_AI:-true}
+      USE_LOCAL_AI: ${USE_LOCAL_AI:-false}
       LIVEKIT_URL: ws://livekit:7880
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
-
-      # LiveKit worker process tuning
-      LIVEKIT_NUM_IDLE_PROCESSES: ${LIVEKIT_NUM_IDLE_PROCESSES:-1}
-      LIVEKIT_INITIALIZE_PROCESS_TIMEOUT: ${LIVEKIT_INITIALIZE_PROCESS_TIMEOUT:-60}
-      LIVEKIT_JOB_MEMORY_WARN_MB: ${LIVEKIT_JOB_MEMORY_WARN_MB:-1200}
-      LIVEKIT_JOB_MEMORY_LIMIT_MB: ${LIVEKIT_JOB_MEMORY_LIMIT_MB:-0}
       
       # Cloud AI Keys - Configure these in .env
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
@@ -107,15 +84,10 @@ services:
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       
-      # Model Selection (defaults tuned for local stack)
-      LLM_PROVIDER: openai # google, openai, groq
-      STT_PROVIDER: openai # google, deepgram, openai
-      TTS_PROVIDER: openai # google, deepgram, openai, elevenlabs
-
-      # Local AI endpoint routing inside Docker network
-      WHISPER_BASE_URL: http://whisper:80/v1
-      KOKORO_BASE_URL: http://kokoro:8880/v1
-      LLAMA_BASE_URL: http://llama_cpp:11434/v1
+      # Model Selection (defaults to Gemini/Google if not specified)
+      LLM_PROVIDER: ${LLM_PROVIDER:-google} # google, openai, groq
+      STT_PROVIDER: ${STT_PROVIDER:-google} # google, deepgram, openai
+      TTS_PROVIDER: ${TTS_PROVIDER:-google} # google, deepgram, openai, elevenlabs
       
       # Qdrant vector store
       QDRANT_URL: http://qdrant:6333
@@ -129,12 +101,10 @@ services:
     build:
       context: .
       dockerfile: apps/ai-services/Dockerfile
-      args:
-        PRELOAD_MODELS: ${PRELOAD_MODELS:-0}
     command: ["python", "-m", "uvicorn", "agent.main:app", "--host", "0.0.0.0", "--port", "8001"]
     environment:
       APP_ENV: ${APP_ENV:-dev}
-      USE_LOCAL_AI: ${USE_LOCAL_AI:-true}
+      USE_LOCAL_AI: ${USE_LOCAL_AI:-false}
       LIVEKIT_URL: ws://livekit:7880
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
@@ -144,14 +114,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      LLM_PROVIDER: openai
-      STT_PROVIDER: openai
-      TTS_PROVIDER: openai
-
-      # Local AI endpoint routing inside Docker network
-      WHISPER_BASE_URL: http://whisper:80/v1
-      KOKORO_BASE_URL: http://kokoro:8880/v1
-      LLAMA_BASE_URL: http://llama_cpp:11434/v1
+      LLM_PROVIDER: ${LLM_PROVIDER:-google}
+      STT_PROVIDER: ${STT_PROVIDER:-google}
+      TTS_PROVIDER: ${TTS_PROVIDER:-google}
       QDRANT_URL: http://qdrant:6333
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:3000,http://localhost:8000}
     ports:
@@ -190,7 +155,18 @@ services:
       - "3000:3000"
     depends_on:
       - api
-
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf.example:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+      - frontend
+      - livekit
 volumes:
   pgdata:
   pgadmin-data:

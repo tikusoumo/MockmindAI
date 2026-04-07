@@ -6,6 +6,7 @@ Following backend-specialist agent: Qdrant for vector search.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -36,9 +37,53 @@ class TemplateVectorStore:
 
     def __init__(self, url: str | None = None):
         self.url = url or settings.qdrant_url
-        self.client = QdrantClient(url=self.url)
+        self.client = QdrantClient(
+            url=self.url,
+            timeout=settings.qdrant_timeout_seconds,
+        )
         self._embedder: SentenceTransformer | None = None
         self._ensure_collection()
+
+    def query_for_interview_sync(
+        self,
+        template_id: str,
+        query: str,
+        k: int = 5,
+    ) -> list[str]:
+        """Synchronous interview query helper used by both async and sync call sites."""
+        query_embedding = self.embedder.encode([query], show_progress_bar=False)[0]
+
+        query_filter = qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="template_id",
+                    match=qdrant_models.MatchValue(value=template_id),
+                )
+            ]
+        )
+
+        if hasattr(self.client, "query_points"):
+            response = self.client.query_points(
+                collection_name=self.COLLECTION_NAME,
+                query=query_embedding.tolist(),
+                query_filter=query_filter,
+                limit=k,
+                with_payload=True,
+            )
+            points = getattr(response, "points", [])
+            return [
+                point.payload.get("content", "")
+                for point in points
+                if getattr(point, "payload", None) and point.payload.get("content")
+            ]
+
+        results = self.client.search(
+            collection_name=self.COLLECTION_NAME,
+            query_vector=query_embedding.tolist(),
+            query_filter=query_filter,
+            limit=k,
+        )
+        return [hit.payload.get("content", "") for hit in results if hit.payload.get("content")]
 
     @property
     def embedder(self) -> SentenceTransformer:
@@ -127,25 +172,16 @@ class TemplateVectorStore:
         Returns:
             List of relevant content strings
         """
-        # Generate query embedding
-        query_embedding = self.embedder.encode([query], show_progress_bar=False)[0]
-
-        # Search with template filter
-        results = self.client.search(
-            collection_name=self.COLLECTION_NAME,
-            query_vector=query_embedding.tolist(),
-            query_filter=qdrant_models.Filter(
-                must=[
-                    qdrant_models.FieldCondition(
-                        key="template_id",
-                        match=qdrant_models.MatchValue(value=template_id),
-                    )
-                ]
-            ),
-            limit=k,
-        )
-
-        return [hit.payload.get("content", "") for hit in results]
+        try:
+            return await asyncio.to_thread(
+                self.query_for_interview_sync,
+                template_id,
+                query,
+                k,
+            )
+        except Exception as e:
+            logger.warning("Failed RAG query for template %s: %s", template_id, e)
+            return []
 
     async def get_template_context(
         self,

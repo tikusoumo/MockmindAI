@@ -57,13 +57,9 @@ export function useBackendData<T>(path: string, fallback: T): T {
   return data;
 }
 
-export function useBackendDataState<T>(
-  path: string,
-  fallback: T,
-): { data: T; isLoading: boolean; error: Error | null } {
+export function useBackendDataState<T>(path: string, fallback: T): { data: T; isLoading: boolean } {
   const [data, setData] = React.useState<T>(fallback);
   const [isLoading, setIsLoading] = React.useState(true);
-  const [error, setError] = React.useState<Error | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -71,16 +67,12 @@ export function useBackendDataState<T>(
 
     fetchJson<T>(path)
       .then((next) => {
-        if (cancelled) return;
-        setData(next);
-        setError(null);
+        if (!cancelled) {
+          setData(next);
+          setIsLoading(false);
+        }
       })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setData(fallback);
-        setError(err instanceof Error ? err : new Error("Failed to fetch backend data"));
-      })
-      .finally(() => {
+      .catch(() => {
         if (!cancelled) setIsLoading(false);
       });
 
@@ -89,7 +81,7 @@ export function useBackendDataState<T>(
     };
   }, [path]);
 
-  return { data, isLoading, error };
+  return { data, isLoading };
 }
 
 export async function backendPost<T>(path: string, body: unknown): Promise<T> {

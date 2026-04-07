@@ -5,7 +5,7 @@ export interface User {
   level: string;
 }
 
-// Interview mode for RAG-based interviews
+// Interview mode for RAG-based interviewsd
 export type InterviewMode = 'learning' | 'strict';
 
 // Document uploaded for template (for RAG)

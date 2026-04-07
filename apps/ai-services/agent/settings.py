@@ -42,6 +42,15 @@ class Settings(BaseSettings):
 
     # Qdrant Vector Store for RAG
     qdrant_url: str = "http://qdrant:6333"
+    qdrant_timeout_seconds: float = 3.0
+    rag_lookup_timeout_seconds: float = 2.0
+    rag_prewarm_embedder: bool = True
+    rag_lookup_k: int = 3
+    rag_injected_chunks: int = 2
+    rag_chunk_max_chars: int = 900
+    rag_context_max_chars: int = 2500
+    rag_query_max_chars: int = 500
+    llm_chat_max_items: int = 12
 
     # --- Modular Provider Configuration ---
     llm_provider: str = "openai"

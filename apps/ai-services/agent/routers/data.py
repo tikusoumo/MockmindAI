@@ -25,6 +25,10 @@ class InterviewTemplate(BaseModel):
     difficulty: str
     icon: str
     color: str
+    type: str | None = None
+    questions: list[dict] | None = None
+    mode: str | None = None
+    persona: str | None = None
 
 
 class ProgressStat(BaseModel):
@@ -102,3 +106,32 @@ def get_community_posts() -> list[dict]:
 def get_past_interviews() -> list[dict]:
     """Get past interviews from in-memory store."""
     return store.past_interviews
+
+class SessionData(BaseModel):
+    title: str | None = None
+    type: str | None = None
+    description: str | None = None
+    difficulty: str | None = None
+    mode: str | None = None
+    persona: str | None = None
+    accessType: str | None = None
+
+@router.post("/sessions")
+def create_session(body: SessionData) -> dict:
+    """Create a mock session."""
+    return {"id": "req_" + str(uuid4())}
+
+@router.post("/interview-templates")
+def create_template(body: InterviewTemplate) -> dict:
+    """Create interview template."""
+    store.interview_templates.append(body.model_dump())
+    return body.model_dump()
+
+@router.patch("/interview-templates/{template_id}")
+def update_template(template_id: str, body: dict) -> dict:
+    """Update interview template."""
+    for t in store.interview_templates:
+        if t["id"] == template_id:
+            t.update(body)
+            return t
+    return body

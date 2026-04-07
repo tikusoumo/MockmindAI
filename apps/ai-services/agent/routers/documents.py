@@ -160,7 +160,7 @@ async def upload_user_document(
     
     # Store with session_id as template_id for filtering
     vector_store = get_vector_store()
-    await vector_store.add_template_documents(f"session_{session_id}", result.chunks)
+    await vector_store.add_template_documents(session_id, result.chunks)
     
     return DocumentUploadResponse(
         id=result.metadata.id,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTemplates } from "@/hooks/useTemplates";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -11,11 +11,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Clock, Brain, Code, Users, Play, Trash2, Pencil, Wifi, WifiOff } from "lucide-react";
-import Link from "next/link";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, Clock, Brain, Code, Users, Play, Trash2, Pencil, Wifi, WifiOff, Globe, Download, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import type { InterviewTemplate } from "@/data/mockData";
+import { toast } from "sonner";
 
 const ICON_OPTIONS = ["Brain", "Code", "Users", "Zap", "Target"];
 const COLOR_OPTIONS = [
@@ -131,8 +132,52 @@ function CreateTemplateDialog({ onSave }: { onSave: (t: InterviewTemplate) => vo
 }
 
 export default function TemplatesIndexPage() {
-  const { templates, isLoaded, addTemplate, deleteTemplate, error } = useTemplates();
+  const { templates, isLoaded, addTemplate, updateTemplate, deleteTemplate, error, refetch } = useTemplates();
   const router = useRouter();
+
+  const [communityTemplates, setCommunityTemplates] = useState<any[]>([]);
+  const [loadingCommunity, setLoadingCommunity] = useState(false);
+
+  useEffect(() => {
+    fetchCommunityTemplates();
+  }, []);
+
+  const fetchCommunityTemplates = async () => {
+    setLoadingCommunity(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/community/templates', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) setCommunityTemplates(await res.json());
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setLoadingCommunity(false);
+    }
+  };
+
+  const handlePublishTemplate = async (templateId: string) => {
+    await updateTemplate(templateId, { isPublished: true, publishedAt: new Date().toISOString() } as any);
+    toast.success("Template published to the community.");
+    fetchCommunityTemplates();
+  };
+
+  const handleCloneTemplate = async (templateId: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/community/templates/${templateId}/use`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        toast.success("Template added to My Templates.");
+        refetch();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   if (!isLoaded) {
     return (
@@ -152,7 +197,7 @@ export default function TemplatesIndexPage() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-background p-6 space-y-8">
+    <div className="flex flex-col h-full bg-background p-6 space-y-8 max-w-6xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Interview Templates</h1>
@@ -167,109 +212,209 @@ export default function TemplatesIndexPage() {
         <CreateTemplateDialog onSave={addTemplate} />
       </div>
 
-      {templates.length === 0 ? (
-        <div className="flex flex-col items-center justify-center flex-1 min-h-[300px] text-center space-y-4 border-2 border-dashed border-border rounded-xl">
-          <Brain className="h-12 w-12 text-muted-foreground/30" />
-          <div>
-            <p className="font-semibold text-lg">No templates yet</p>
-            <p className="text-muted-foreground text-sm">Create your first template to get started</p>
-          </div>
-          <CreateTemplateDialog onSave={addTemplate} />
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {templates.map((template) => (
-            <Card
-              key={template.id}
-              className="flex flex-col hover:shadow-lg transition-all cursor-pointer group hover:border-primary/40"
-              onClick={() => router.push(`/templates/${template.id}`)}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <div className={cn("p-1.5 rounded-lg", template.color)}>
-                    <TemplateIcon icon={template.icon} className="text-white" />
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      template.difficulty === "Easy" ? "border-green-500/20 text-green-500 bg-green-500/10" :
-                      template.difficulty === "Medium" ? "border-yellow-500/20 text-yellow-500 bg-yellow-500/10" :
-                      "border-red-500/20 text-red-500 bg-red-500/10"
+      <Tabs defaultValue="my-templates" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="my-templates">My Templates</TabsTrigger>
+          <TabsTrigger value="community">Community Templates</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="my-templates" className="space-y-4">
+          {templates.length === 0 ? (
+            <div className="flex flex-col items-center justify-center flex-1 min-h-[300px] text-center space-y-4 border-2 border-dashed border-border rounded-xl">
+              <Brain className="h-12 w-12 text-muted-foreground/30" />
+              <div>
+                <p className="font-semibold text-lg">No templates yet</p>
+                <p className="text-muted-foreground text-sm">Create your first template to get started</p>
+              </div>
+              <CreateTemplateDialog onSave={addTemplate} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {templates.map((template: any) => (
+                <Card
+                  key={template.id}
+                  className="flex flex-col hover:shadow-lg transition-all cursor-pointer group hover:border-primary/40 relative"
+                  onClick={() => router.push(`/templates/${template.id}`)}
+                >
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between">
+                      <div className={cn("p-1.5 rounded-lg", template.color)}>
+                        <TemplateIcon icon={template.icon} className="text-white" />
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          template.difficulty === "Easy" ? "border-green-500/20 text-green-500 bg-green-500/10" :
+                          template.difficulty === "Medium" ? "border-yellow-500/20 text-yellow-500 bg-yellow-500/10" :
+                          "border-red-500/20 text-red-500 bg-red-500/10"
+                        )}
+                      >
+                        {template.difficulty}
+                      </Badge>
+                    </div>
+                    <CardTitle className="mt-2 text-base flex items-center gap-2">
+                      {template.title}
+                      {template.isPublished && (
+                        <span title="Published to Community">
+                          <Globe className="h-3.5 w-3.5 text-blue-500" />
+                        </span>
+                      )}
+                    </CardTitle>
+                    <CardDescription className="line-clamp-2 min-h-[32px] text-xs">
+                      {template.description}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex-1 pb-2">
+                    <div className="flex items-center text-sm text-muted-foreground gap-4">
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" /> {template.duration}
+                      </div>
+                      <Badge variant="secondary" className="text-[10px] h-5">{template.type}</Badge>
+                    </div>
+                  </CardContent>
+                  <CardFooter className="pt-0 gap-2">
+                    <Button
+                      className="flex-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      variant="default"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/interview?template=${template.id}`);
+                      }}
+                    >
+                      <Play className="mr-1.5 h-3 w-3" /> Start
+                    </Button>
+                    
+                    {!template.isPublished && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePublishTemplate(template.id);
+                        }}
+                      >
+                        <Globe className="mr-1 h-3 w-3" /> Publish
+                      </Button>
                     )}
-                  >
-                    {template.difficulty}
-                  </Badge>
-                </div>
-                <CardTitle className="mt-2 text-base">{template.title}</CardTitle>
-                <CardDescription className="line-clamp-2 min-h-[32px] text-xs">
-                  {template.description}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex-1 pb-2">
-                <div className="flex items-center text-sm text-muted-foreground gap-4">
-                  <div className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" /> {template.duration}
-                  </div>
-                  <Badge variant="secondary" className="text-[10px] h-5">{template.type}</Badge>
-                </div>
-              </CardContent>
-              <CardFooter className="pt-0 gap-2">
-                <Button
-                  className="flex-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                  variant="default"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    router.push(`/interview?template=${template.id}`);
-                  }}
-                >
-                  <Play className="mr-1.5 h-3 w-3" /> Start Session
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    router.push(`/templates/${template.id}`);
-                  }}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
+
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500"
-                      onClick={(e) => e.stopPropagation()}
+                      className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/templates/${template.id}`);
+                      }}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete Template?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This will permanently delete &ldquo;{template.title}&rdquo;. This action cannot be undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                        onClick={() => deleteTemplate(template.id)}
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete Template?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This will permanently delete "{template.title}". This action cannot be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            onClick={() => deleteTemplate(template.id)}
+                          >
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </CardFooter>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="community" className="space-y-4">
+          {loadingCommunity ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-48" />)}
+            </div>
+          ) : communityTemplates.length === 0 ? (
+            <div className="flex flex-col items-center justify-center flex-1 min-h-[300px] text-center space-y-4 border-2 border-dashed border-border rounded-xl">
+              <Globe className="h-12 w-12 text-muted-foreground/30" />
+              <div>
+                <p className="font-semibold text-lg">No Community Templates</p>
+                <p className="text-muted-foreground text-sm">Be the first to publish a template!</p>
+              </div>
+            </div>
+          ) : (
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+               {communityTemplates.map((template: any) => (
+                 <Card key={template.id} className="flex flex-col transition-all group border-muted">
+                    <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between">
+                      <div className={cn("p-1.5 rounded-lg", template.color)}>
+                        <TemplateIcon icon={template.icon} className="text-white" />
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          template.difficulty === "Easy" ? "border-green-500/20 text-green-500 bg-green-500/10" :
+                          template.difficulty === "Medium" ? "border-yellow-500/20 text-yellow-500 bg-yellow-500/10" :
+                          "border-red-500/20 text-red-500 bg-red-500/10"
+                        )}
                       >
-                        Delete
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </CardFooter>
-            </Card>
-          ))}
-        </div>
-      )}
+                        {template.difficulty}
+                      </Badge>
+                    </div>
+                    <CardTitle className="mt-2 text-base">{template.title}</CardTitle>
+                    <CardDescription className="line-clamp-2 min-h-[32px] text-xs">
+                      {template.description}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex-1 pb-2">
+                    <div className="flex items-center text-sm text-muted-foreground gap-4">
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" /> {template.duration}
+                      </div>
+                      <Badge variant="secondary" className="text-[10px] h-5">{template.type}</Badge>
+                    </div>
+                    <div className="flex justify-between items-center mt-4 pt-4 border-t">
+                      <span className="text-xs text-muted-foreground flex items-center">
+                        <Download className="w-3 h-3 mr-1" /> {template.usageCount} uses
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        By {template.creator?.name || 'Anonymous'}
+                      </span>
+                    </div>
+                  </CardContent>
+                  <CardFooter className="pt-0 gap-2">
+                    <Button 
+                      variant="default" 
+                      className="w-full"
+                      onClick={() => handleCloneTemplate(template.id)}
+                    >
+                      <Download className="w-4 h-4 mr-2" /> Use Template
+                    </Button>
+                  </CardFooter>
+                 </Card>
+               ))}
+             </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

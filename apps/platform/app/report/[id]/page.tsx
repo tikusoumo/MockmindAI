@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
   CheckCircle2, 
@@ -13,6 +13,7 @@ import {
   ChevronUp,
   ArrowLeft,
   Play,
+  Pause,
   MessageSquare,
   Mic,
   Activity,
@@ -27,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { ReportData } from "@/data/mockData";
-import { backendGet } from "@/lib/backend";
+import { backendGet, getBackendUrl } from "@/lib/backend";
 import { fallbackReport } from "@/lib/fallback-data";
 import {
   Radar,
@@ -256,7 +257,7 @@ function resolveMediaUrl(url: string | undefined): string | undefined {
     return url;
   }
 
-  const backendBase = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+  const backendBase = getBackendUrl();
   if (url.startsWith("/")) {
     return `${backendBase}${url}`;
   }
@@ -266,10 +267,30 @@ function resolveMediaUrl(url: string | undefined): string | undefined {
 
 const REPORT_POLL_INTERVAL_MS = 5000;
 const REPORT_POLL_MAX_DURATION_MS = 5 * 60 * 1000;
+const AUDIO_RECOVERY_POLL_INTERVAL_MS = 4000;
+const AUDIO_RECOVERY_POLL_MAX_DURATION_MS = 2 * 60 * 1000;
 
 function withNoCache(path: string): string {
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}_ts=${Date.now()}`;
+}
+
+function parseDownloadFileName(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const basicMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  if (basicMatch?.[1]) {
+    return basicMatch[1];
+  }
+
+  return fallback;
 }
 
 function hasTimeoutFallbackMessage(report: ReportData): boolean {
@@ -292,8 +313,75 @@ export default function ReportDetailPage() {
   const [openQuestion, setOpenQuestion] = useState<number | null>(null);
   const [report, setReport] = useState<ReportData>(fallbackReport);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeAudioQuestionId, setActiveAudioQuestionId] = useState<number | null>(null);
+  const [downloadingQuestionId, setDownloadingQuestionId] = useState<number | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isResolvingAudio, setIsResolvingAudio] = useState(false);
+  const [audioRecoveryExhausted, setAudioRecoveryExhausted] = useState(false);
+  const [audioLoadErrorByQuestion, setAudioLoadErrorByQuestion] = useState<Record<number, boolean>>({});
+  const audioElementRefs = useRef<Record<number, HTMLAudioElement | null>>({});
 
   const endpoint = id === 'latest' ? '/api/reports/latest' : `/api/reports/${id}`;
+
+  const toggleQuestionAudioPlayback = (questionId: number) => {
+    const targetAudio = audioElementRefs.current[questionId];
+    if (!targetAudio) {
+      return;
+    }
+
+    if (activeAudioQuestionId !== null && activeAudioQuestionId !== questionId) {
+      const previousAudio = audioElementRefs.current[activeAudioQuestionId];
+      if (previousAudio && !previousAudio.paused) {
+        previousAudio.pause();
+      }
+    }
+
+    if (targetAudio.paused) {
+      setAudioLoadErrorByQuestion((prev) => ({ ...prev, [questionId]: false }));
+      targetAudio.play().catch(() => {
+        setAudioLoadErrorByQuestion((prev) => ({ ...prev, [questionId]: true }));
+      });
+      return;
+    }
+
+    targetAudio.pause();
+  };
+
+  const downloadQuestionAudio = async (questionId: number, audioUrl: string) => {
+    setDownloadingQuestionId(questionId);
+
+    try {
+      const response = await fetch(audioUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch recording: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      if (blob.size === 0) {
+        throw new Error("Recording blob is empty");
+      }
+
+      const contentType = blob.type.toLowerCase();
+      let extension = "webm";
+      if (contentType.includes("mp4")) extension = "mp4";
+      else if (contentType.includes("mpeg") || contentType.includes("mp3")) extension = "mp3";
+      else if (contentType.includes("wav")) extension = "wav";
+      else if (contentType.includes("ogg")) extension = "ogg";
+
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `question-${questionId}-recording.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch {
+      window.open(audioUrl, "_blank", "noopener,noreferrer");
+    } finally {
+      setDownloadingQuestionId((current) => (current === questionId ? null : current));
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -322,10 +410,32 @@ export default function ReportDetailPage() {
     };
   }, [endpoint]);
 
+  useEffect(() => {
+    setActiveAudioQuestionId(null);
+    setAudioLoadErrorByQuestion({});
+    setAudioRecoveryExhausted(false);
+  }, [report.id]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(audioElementRefs.current).forEach((audio) => {
+        if (audio && !audio.paused) {
+          audio.pause();
+        }
+      });
+    };
+  }, []);
+
   const isPendingReport = report?.id?.startsWith("rep_pending_") ?? false;
   const isTimeoutFallbackReport =
     Number(report?.overallScore ?? 0) === 0 && hasTimeoutFallbackMessage(report);
   const isAwaitingFinalReport = isPendingReport || isTimeoutFallbackReport;
+  const sharedRecordingAudioUrl = resolveMediaUrl(report.recordingAudioUrl);
+  const hasServerQuestionAudioGap =
+    Array.isArray(report.questions) &&
+    report.questions.length > 0 &&
+    report.questions.some((question) => !question?.audioUrl) &&
+    !sharedRecordingAudioUrl;
 
   useEffect(() => {
     if (isLoading || !isAwaitingFinalReport) {
@@ -368,6 +478,60 @@ export default function ReportDetailPage() {
       clearInterval(interval);
     };
   }, [endpoint, isAwaitingFinalReport, isLoading]);
+
+  useEffect(() => {
+    if (isLoading || isAwaitingFinalReport || !hasServerQuestionAudioGap || audioRecoveryExhausted) {
+      setIsResolvingAudio(false);
+      return;
+    }
+
+    let cancelled = false;
+    const pollStartedAt = Date.now();
+    setIsResolvingAudio(true);
+
+    const interval = window.setInterval(async () => {
+      try {
+        const next = await backendGet<ReportData>(withNoCache(endpoint));
+        if (cancelled) {
+          return;
+        }
+
+        setReport(next);
+
+        const nextHasAudioGap =
+          Array.isArray(next.questions) &&
+          next.questions.length > 0 &&
+          next.questions.some((question) => !question?.audioUrl);
+
+        if (!nextHasAudioGap) {
+          setIsResolvingAudio(false);
+          setAudioRecoveryExhausted(false);
+          clearInterval(interval);
+          return;
+        }
+
+        if (Date.now() - pollStartedAt > AUDIO_RECOVERY_POLL_MAX_DURATION_MS) {
+          setIsResolvingAudio(false);
+          setAudioRecoveryExhausted(true);
+          clearInterval(interval);
+        }
+      } catch {
+        if (Date.now() - pollStartedAt > AUDIO_RECOVERY_POLL_MAX_DURATION_MS) {
+          if (!cancelled) {
+            setIsResolvingAudio(false);
+            setAudioRecoveryExhausted(true);
+          }
+          clearInterval(interval);
+        }
+      }
+    }, AUDIO_RECOVERY_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      setIsResolvingAudio(false);
+      clearInterval(interval);
+    };
+  }, [audioRecoveryExhausted, endpoint, hasServerQuestionAudioGap, isAwaitingFinalReport, isLoading]);
 
   const normalizedTranscript = useMemo<TranscriptDisplayEntry[]>(() => {
     const reportWithLegacyTranscript = report as ReportData & {
@@ -435,17 +599,46 @@ export default function ReportDetailPage() {
   const radarData = Array.isArray(report.radarData) ? report.radarData : [];
   const timelineData = Array.isArray(report.timelineData) ? report.timelineData : [];
 
-  const handleExportPdf = () => {
-    if (typeof window === "undefined") {
+  const handleExportPdf = async () => {
+    if (typeof window === "undefined" || isExportingPdf) {
       return;
     }
 
-    const previousTitle = document.title;
-    document.title = `Interview Report - ${report.id}`;
-    window.print();
-    window.setTimeout(() => {
-      document.title = previousTitle;
-    }, 0);
+    setIsExportingPdf(true);
+    try {
+      const backendBase = getBackendUrl();
+      const reportIdForExport = id || report.id || "latest";
+      const token = localStorage.getItem("auth_token");
+      const response = await fetch(`${backendBase}/api/reports/${reportIdForExport}/pdf`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to export report PDF: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      if (blob.size === 0) {
+        throw new Error("Exported PDF is empty");
+      }
+
+      const fileName = parseDownloadFileName(
+        response.headers.get("content-disposition"),
+        `interview-report-${reportIdForExport}.pdf`,
+      );
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      console.error("Failed to export custom report PDF", error);
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   if (isLoading) {
@@ -496,8 +689,8 @@ export default function ReportDetailPage() {
           <Button variant="outline">
             <Share2 className="mr-2 h-4 w-4" /> Share
           </Button>
-          <Button onClick={handleExportPdf}>
-            <Download className="mr-2 h-4 w-4" /> Export PDF
+          <Button onClick={handleExportPdf} disabled={isExportingPdf}>
+            <Download className="mr-2 h-4 w-4" /> {isExportingPdf ? "Preparing..." : "Export PDF"}
           </Button>
         </div>
       </div>
@@ -637,7 +830,11 @@ export default function ReportDetailPage() {
                     ? "secondary"
                     : "destructive"
                 : "outline";
-              const audioUrl = resolveMediaUrl(q.audioUrl);
+              const audioUrl = resolveMediaUrl(q.audioUrl) || sharedRecordingAudioUrl;
+              const hasAudioLoadError = Boolean(audioLoadErrorByQuestion[q.id]);
+              const canUseAudio = Boolean(audioUrl) && !hasAudioLoadError;
+              const isAudioPlaying = activeAudioQuestionId === q.id;
+              const isDownloadingAudio = downloadingQuestionId === q.id;
               const improvements = Array.isArray(q.improvements) ? q.improvements : [];
 
               return (
@@ -661,13 +858,23 @@ export default function ReportDetailPage() {
 
                     <CollapsibleContent>
                       <div className="px-6 pb-6 space-y-4 border-t pt-4">
-                        {audioUrl ? (
+                        {canUseAudio ? (
                           <div className="space-y-3 bg-muted/30 p-3 rounded-md border">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
-                                <div className="h-8 w-8 flex items-center justify-center rounded-full border bg-background">
-                                  <Play className="h-3 w-3" />
-                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8 rounded-full"
+                                  onClick={() => toggleQuestionAudioPlayback(q.id)}
+                                >
+                                  {isAudioPlaying ? (
+                                    <Pause className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Play className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
                                 <div className="space-y-0.5">
                                   <div className="text-xs font-medium">Audio Recording</div>
                                   <div className="text-[10px] text-muted-foreground">Playback and download are available.</div>
@@ -677,16 +884,45 @@ export default function ReportDetailPage() {
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 text-xs"
-                                onClick={() => window.open(audioUrl, "_blank", "noopener,noreferrer")}
+                                disabled={isDownloadingAudio}
+                                onClick={() => {
+                                  if (!audioUrl) {
+                                    return;
+                                  }
+                                  void downloadQuestionAudio(q.id, audioUrl);
+                                }}
                               >
-                                Download
+                                {isDownloadingAudio ? "Preparing..." : "Download"}
                               </Button>
                             </div>
-                            <audio controls preload="none" src={audioUrl} className="w-full" />
+                            <audio
+                              ref={(audioElement) => {
+                                audioElementRefs.current[q.id] = audioElement;
+                              }}
+                              controls
+                              preload="none"
+                              src={audioUrl}
+                              className="w-full"
+                              onPlay={() => setActiveAudioQuestionId(q.id)}
+                              onPause={() => setActiveAudioQuestionId((current) => (current === q.id ? null : current))}
+                              onEnded={() => setActiveAudioQuestionId((current) => (current === q.id ? null : current))}
+                              onError={() => {
+                                setAudioLoadErrorByQuestion((prev) => ({ ...prev, [q.id]: true }));
+                                setActiveAudioQuestionId((current) => (current === q.id ? null : current));
+                              }}
+                            />
                           </div>
                         ) : (
                           <div className="flex items-center justify-between bg-muted/30 p-3 rounded-md border">
-                            <div className="text-xs text-muted-foreground">Audio recording is not available for this question.</div>
+                            <div className="text-xs text-muted-foreground">
+                              {hasAudioLoadError
+                                ? "Audio recording could not be loaded. The file may be missing."
+                                : isResolvingAudio
+                                  ? "Audio is still being prepared. Retrying automatically..."
+                                  : audioRecoveryExhausted
+                                    ? "Audio processing took longer than expected. Try refreshing in a minute."
+                                  : "Audio recording is not available for this question."}
+                            </div>
                           </div>
                         )}
 

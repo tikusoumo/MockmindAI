@@ -89,6 +89,11 @@ export class QuestionFeedbackDto {
   @IsArray()
   @IsString({ each: true })
   improvements: string[];
+
+  @ApiPropertyOptional({ description: 'Optional recording URL for this question audio' })
+  @IsOptional()
+  @IsString()
+  audioUrl?: string;
 }
 
 // Transcript entry
@@ -264,6 +269,11 @@ export class ReportResponseDto {
   @ValidateNested({ each: true })
   @Type(() => ResourceDto)
   resources: ResourceDto[];
+
+  @ApiPropertyOptional({ description: 'Shared recording URL that can be used as fallback question audio' })
+  @IsOptional()
+  @IsString()
+  recordingAudioUrl?: string;
 }
 
 // Request to generate a report

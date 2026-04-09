@@ -1,12 +1,17 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { PrismaService } from '../prisma.service';
+import { NotificationsGateway } from './notifications.gateway';
 
 @Injectable()
 export class NotificationsService {
   private transporter: nodemailer.Transporter;
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor() {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gateway: NotificationsGateway,
+  ) {
     this.transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -23,6 +28,10 @@ export class NotificationsService {
 
   async sendEmail(to: string, subject: string, html: string) {
     try {
+      if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+        this.logger.warn(`SMTP credentials not configured. Mock sending email to ${to}`);
+        return;
+      }
       await this.transporter.sendMail({
         from: '"MockMind AI" <' + process.env.SMTP_USER + '>',
         to,
@@ -33,6 +42,95 @@ export class NotificationsService {
     } catch (error) {
       this.logger.error(`Error sending email to ${to}`, error);
       throw new BadRequestException("Could not send mail");
+    }
+  }
+
+  // ---- In-App / DB Notifications ----
+
+  async createNotification(userId: number, type: string, title: string, body: string, metadata: any = {}) {
+    const notification = await this.prisma.notification.create({
+      data: {
+        userId,
+        type,
+        title,
+        body,
+        metadata,
+      },
+    });
+
+    // Push to client
+    this.gateway.sendToUser(userId, 'notification:new', notification);
+
+    // Also update unread count
+    const unreadCount = await this.getUnreadCount(userId);
+    this.gateway.sendToUser(userId, 'notification:count', { count: unreadCount });
+
+    return notification;
+  }
+
+  async getUserNotifications(userId: number, limit = 50, unreadOnly = false) {
+    return this.prisma.notification.findMany({
+      where: {
+        userId,
+        ...(unreadOnly ? { read: false } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async markAsRead(id: string, userId: number) {
+    const notification = await this.prisma.notification.update({
+      where: { id, userId },
+      data: { read: true },
+    });
+
+    const unreadCount = await this.getUnreadCount(userId);
+    this.gateway.sendToUser(userId, 'notification:count', { count: unreadCount });
+
+    return notification;
+  }
+
+  async markAllAsRead(userId: number) {
+    await this.prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true },
+    });
+    this.gateway.sendToUser(userId, 'notification:count', { count: 0 });
+    return { success: true };
+  }
+
+  async getUnreadCount(userId: number) {
+    return this.prisma.notification.count({
+      where: { userId, read: false },
+    });
+  }
+
+  // A simple timeout-based reminder for demo purposes
+  // In production, you'd use @nestjs/bull or a proper job queue
+  scheduleReminder(userId: number, sessionId: string, title: string, date: Date) {
+    const now = new Date();
+    // Schedule 30 mins before the event
+    const runAt = new Date(date.getTime() - 30 * 60 * 1000);
+    const delay = runAt.getTime() - now.getTime();
+
+    if (delay > 0) {
+      setTimeout(async () => {
+        try {
+          await this.createNotification(
+            userId,
+            'schedule_reminder',
+            'Upcoming Session Reminder',
+            `Your session "${title}" is starting in 30 minutes.`,
+            { sessionId }
+          );
+        } catch (error) {
+          this.logger.error(`Failed to send schedule reminder for session ${sessionId}`, error);
+        }
+      }, delay);
+      this.logger.log(`Scheduled reminder for session ${sessionId} in ${delay}ms`);
+    } else {
+      this.logger.warn(`Reminder for session ${sessionId} is in the past or too soon.`);
     }
   }
 

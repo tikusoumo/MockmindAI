@@ -41,7 +41,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import type { User } from "@/data/mockData";
-import { useBackendData } from "@/lib/backend";
+import { backendPost, useBackendData } from "@/lib/backend";
 import { fallbackCurrentUser } from "@/lib/fallback-data";
 import { ParticipantVisualizer } from "@/components/interview/ParticipantVisualizer";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
@@ -49,12 +49,11 @@ import { useMediaDevices } from "@/hooks/useMediaDevices";
 import { 
   LiveKitRoom, 
   RoomAudioRenderer,
-  useLocalParticipant,
-  useRemoteParticipants,
+  useMaybeRoomContext,
   VideoTrack,
   useTracks,
 } from "@livekit/components-react";
-import { Track } from "livekit-client";
+import { RoomEvent, Track } from "livekit-client";
 import '@livekit/components-styles';
 
 export default function InterviewPage() {
@@ -73,32 +72,47 @@ function InterviewPageContent() {
   const templateId = searchParams.get("template");
   const customTitle = searchParams.get("title");
   const customType = searchParams.get("type");
-  const sessionId = searchParams.get("sessionId");
+  const customDescription = searchParams.get("description");
+  const persistedSessionId = searchParams.get("sessionId");
+  const [effectiveSessionId] = useState<string>(() =>
+    persistedSessionId || `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  );
 
   const [sessionDbData, setSessionDbData] = useState<any>(null);
 
   useEffect(() => {
-     if (sessionId) {
+     if (persistedSessionId) {
          import("@/lib/backend").then(({ backendGet }) => {
-             backendGet(`/api/sessions/${sessionId}`)
+             backendGet(`/api/sessions/${persistedSessionId}`)
                .then(setSessionDbData)
                .catch(console.error);
          });
      }
-  }, [sessionId]);
+  }, [persistedSessionId]);
 
   const effectiveType = sessionDbData?.type || customType;
-  const isCodingRound = templateId === "machine-coding-round" || templateId === "tech-round" || effectiveType === "Machine Coding" || effectiveType === "Technical";  
+  const normalizedEffectiveType = String(effectiveType || "").trim().toLowerCase();
+  const isCodingRound =
+    templateId === "machine-coding-round" ||
+    templateId === "tech-round" ||
+    normalizedEffectiveType === "machine coding" ||
+    normalizedEffectiveType === "technical";
+  const resolvedInterviewType =
+    effectiveType ||
+    (templateId === "machine-coding-round" ? "Machine Coding" : isCodingRound ? "Technical" : "Technical");
+  const effectiveMode = sessionDbData?.aiBehavior || searchParams.get("mode") || "strict";
+  const effectiveTitle = sessionDbData?.title || customTitle || "Interview";
+  const effectiveDescription = sessionDbData?.focusAreas || customDescription || "Practice session";
 
   const dummyTemplate: InterviewTemplate = {
     id: templateId || "dummy",
     title: sessionDbData?.title || customTitle || "Tech Round: React & System Design",
     type: (effectiveType as any) || (isCodingRound ? "Machine Coding" : "Technical"),
-    mode: sessionDbData?.aiBehavior || (searchParams.get("mode") as any) || "strict",
+    mode: effectiveMode as any,
     duration: "45 mins",
     difficulty: sessionDbData?.difficulty || (searchParams.get("difficulty") as any) || "Medium",
     questions: [],
-    description: sessionDbData?.focusAreas || "Practice session",
+    description: effectiveDescription,
     icon: isCodingRound ? "Code" : "Sparkles",
     color: isCodingRound ? "blue" : "blue",
     persona: sessionDbData?.persona || searchParams.get("persona") || "Sarah",
@@ -110,14 +124,25 @@ function InterviewPageContent() {
 
   useEffect(() => {
      let mounted = true;
+     if (persistedSessionId && !sessionDbData) {
+       return () => {
+         mounted = false;
+       };
+     }
+
      import("@/lib/backend").then(({ backendPost }) => {
         backendPost<{token: string, url: string}>("/api/livekit/token", {
-           room_name: `interview-${sessionId || templateId || "practice"}`,
+          room_name: `interview-${effectiveSessionId}`,
            participant_name: currentUser?.name || "Candidate",            
            metadata: JSON.stringify({
-               templateId: sessionId || templateId,
-               templateTitle: customTitle || "Interview",
-               mode: searchParams.get("mode") || "strict"
+          templateId: templateId || "",
+          sessionId: effectiveSessionId,
+            templateTitle: effectiveTitle,
+            mode: effectiveMode,
+            interviewType: resolvedInterviewType,
+            customDescription: effectiveDescription,
+            ideEnabled: isCodingRound,
+            participantName: currentUser?.name || "Candidate",
             })        }).then((data) => {
            if (mounted) {
               setLiveKitToken(data.token);
@@ -132,7 +157,19 @@ function InterviewPageContent() {
         });
      });
      return () => { mounted = false; };
-  }, [templateId, sessionId, currentUser?.name]);
+  }, [
+    currentUser?.name,
+    effectiveDescription,
+    effectiveMode,
+    effectiveTitle,
+    effectiveType,
+    effectiveSessionId,
+    isCodingRound,
+    persistedSessionId,
+    resolvedInterviewType,
+    sessionDbData,
+    templateId,
+  ]);
 
   if (!liveKitToken) {
      return <div className="flex flex-col h-full items-center justify-center gap-4 text-center">
@@ -148,7 +185,7 @@ function InterviewPageContent() {
   if (liveKitToken === "dummy") {
       return (
           <div className="flex flex-col gap-4 h-full w-full">
-            <InterviewSession currentUser={currentUser} template={dummyTemplate} isDummyMode={true} sessionDbData={sessionDbData} sessionId={sessionId || undefined} />
+            <InterviewSession currentUser={currentUser} template={dummyTemplate} isDummyMode={true} sessionDbData={sessionDbData} sessionId={effectiveSessionId} />
           </div>
       );
   }
@@ -162,13 +199,15 @@ function InterviewPageContent() {
       audio={true}
       className="flex flex-col gap-4 h-full w-full"
     >
-      <InterviewSession currentUser={currentUser} template={dummyTemplate} isDummyMode={false} sessionDbData={sessionDbData} sessionId={sessionId || undefined} />
+      <InterviewSession currentUser={currentUser} template={dummyTemplate} isDummyMode={false} sessionDbData={sessionDbData} sessionId={effectiveSessionId} />
       <RoomAudioRenderer />
     </LiveKitRoom>
   );
 }
 
 function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, sessionId }: { currentUser: User; template?: InterviewTemplate; isDummyMode: boolean; sessionDbData?: any; sessionId?: string; }) {
+  const router = useRouter();
+  const reportLookupId = sessionId || template?.id || "latest";
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
@@ -178,8 +217,135 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
   const [chatInput, setChatInput] = useState("");
 
   const effectiveType = sessionDbData?.type || template?.type;
-  const isCodingRound = effectiveType === "Machine Coding" || effectiveType === "Technical" || template?.id === "machine-coding-round" || template?.id === "tech-round";
+  const normalizedEffectiveType = String(effectiveType || "").trim().toLowerCase();
+  const isCodingRound =
+    normalizedEffectiveType === "machine coding" ||
+    normalizedEffectiveType === "technical" ||
+    template?.id === "machine-coding-round" ||
+    template?.id === "tech-round";
   const [code, setCode] = useState("// Write your solution here...\n\nfunction solution() {\n  \n}");
+  const [codeLanguage, setCodeLanguage] = useState("javascript");
+  const [latestCodeSnapshot, setLatestCodeSnapshot] = useState<{ code: string; language: string }>({
+    code: "// Write your solution here...\n\nfunction solution() {\n  \n}",
+    language: "javascript",
+  });
+  const [assistantIdeNotice, setAssistantIdeNotice] = useState<string>("");
+  const codeRef = useRef(code);
+  const assistantTypingFrameRef = useRef<number | null>(null);
+  const assistantNoticeTimerRef = useRef<number | null>(null);
+  const suppressIdePublishUntilRef = useRef<number>(0);
+
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
+
+  const stopAssistantTypingAnimation = useCallback(() => {
+    if (assistantTypingFrameRef.current !== null) {
+      window.cancelAnimationFrame(assistantTypingFrameRef.current);
+      assistantTypingFrameRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopAssistantTypingAnimation();
+      if (assistantNoticeTimerRef.current !== null) {
+        window.clearTimeout(assistantNoticeTimerRef.current);
+      }
+    };
+  }, [stopAssistantTypingAnimation]);
+
+  const applyAssistantCodeUpdate = useCallback(
+    (payload: {
+      code?: string;
+      language?: string;
+      intent?: string;
+      explanation?: string;
+      typingMs?: number;
+      typing_ms?: number;
+    }) => {
+      const incomingCode = typeof payload?.code === "string" ? payload.code : "";
+      if (!incomingCode) {
+        return;
+      }
+
+      const intent = payload.intent === "append" ? "append" : "replace";
+      const nextLanguage =
+        typeof payload.language === "string" && payload.language.trim()
+          ? payload.language
+          : codeLanguage;
+      const previousCode = codeRef.current || "";
+      const targetCode = intent === "append" ? `${previousCode}${incomingCode}` : incomingCode;
+      const typingMsRaw = Number(payload.typingMs ?? payload.typing_ms ?? 0);
+      const typingMs = Number.isFinite(typingMsRaw) ? Math.max(0, Math.min(typingMsRaw, 5000)) : 0;
+
+      suppressIdePublishUntilRef.current = Date.now() + Math.max(typingMs + 800, 1200);
+      stopAssistantTypingAnimation();
+
+      const finalize = (finalCode: string) => {
+        setCode(finalCode);
+        codeRef.current = finalCode;
+        setCodeLanguage(nextLanguage || "javascript");
+        setLatestCodeSnapshot({
+          code: finalCode,
+          language: nextLanguage || "javascript",
+        });
+        setIsIdeCollapsed(false);
+      };
+
+      const targetLength = targetCode.length;
+      if (typingMs <= 0 || targetLength > 12000) {
+        finalize(targetCode);
+      } else {
+        let prefixLength = 0;
+        const maxPrefix = Math.min(previousCode.length, targetCode.length);
+        while (prefixLength < maxPrefix && previousCode[prefixLength] === targetCode[prefixLength]) {
+          prefixLength += 1;
+        }
+
+        const startAt = performance.now();
+        const animateStep = (now: number) => {
+          const progress = Math.min(1, (now - startAt) / typingMs);
+          const renderedLength = prefixLength + Math.floor((targetLength - prefixLength) * progress);
+          const nextCode = targetCode.slice(0, renderedLength);
+          setCode(nextCode);
+          codeRef.current = nextCode;
+
+          if (progress < 1) {
+            assistantTypingFrameRef.current = window.requestAnimationFrame(animateStep);
+            return;
+          }
+
+          assistantTypingFrameRef.current = null;
+          finalize(targetCode);
+        };
+
+        assistantTypingFrameRef.current = window.requestAnimationFrame(animateStep);
+      }
+
+      const explanation = typeof payload?.explanation === "string" ? payload.explanation.trim() : "";
+      if (explanation) {
+        const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            name: `${sessionDbData?.persona || "AI"}`,
+            text: `[IDE] ${explanation}`,
+            time,
+          },
+        ]);
+      }
+
+      setAssistantIdeNotice("AI collaborator updated code.");
+      if (assistantNoticeTimerRef.current !== null) {
+        window.clearTimeout(assistantNoticeTimerRef.current);
+      }
+      assistantNoticeTimerRef.current = window.setTimeout(() => {
+        setAssistantIdeNotice("");
+      }, 2200);
+    },
+    [codeLanguage, sessionDbData?.persona, stopAssistantTypingAnimation],
+  );
   
   // IDE Toggles
   const [isIdeCollapsed, setIsIdeCollapsed] = useState(false);
@@ -202,6 +368,12 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
   } = useMediaDevices();
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  const recordingSessionId = sessionId || template?.id || "practice";
+  const livekitRoomName = `interview-${recordingSessionId}`;
+  const roomRecordingEgressIdRef = useRef<string | null>(null);
+  const roomRecordingStartPromiseRef = useRef<Promise<void> | null>(null);
+  const hasStoppedRoomRecordingRef = useRef(false);
+  const [isFinalizingRecording, setIsFinalizingRecording] = useState(false);
 
   // Attach camera stream to video element
   useEffect(() => {
@@ -210,8 +382,100 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
     }
   }, [stream, isCameraEnabled]);
 
+  useEffect(() => {
+    if (isDummyMode || roomRecordingEgressIdRef.current || roomRecordingStartPromiseRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    const startPromise = (async () => {
+      for (let attempt = 1; attempt <= 8; attempt += 1) {
+        if (cancelled) {
+          return;
+        }
+
+        try {
+          const result = await backendPost<{ egressId: string }>("/api/livekit/recordings/start", {
+            room_name: livekitRoomName,
+            session_id: recordingSessionId,
+          });
+          if (!cancelled) {
+            roomRecordingEgressIdRef.current = result.egressId;
+          }
+          return;
+        } catch (error) {
+          if (attempt === 8) {
+            console.error("Failed to start LiveKit room recording", error);
+            return;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      }
+    })()
+      .finally(() => {
+        roomRecordingStartPromiseRef.current = null;
+      });
+
+    roomRecordingStartPromiseRef.current = startPromise;
+    return () => {
+      cancelled = true;
+    };
+  }, [isDummyMode, livekitRoomName, recordingSessionId]);
+
+  const stopRoomRecording = useCallback(async () => {
+    if (isDummyMode || hasStoppedRoomRecordingRef.current) {
+      return;
+    }
+
+    hasStoppedRoomRecordingRef.current = true;
+
+    try {
+      if (roomRecordingStartPromiseRef.current) {
+        await roomRecordingStartPromiseRef.current;
+      }
+
+      const egressId = roomRecordingEgressIdRef.current;
+      if (!egressId) {
+        return;
+      }
+
+      setIsFinalizingRecording(true);
+      await backendPost("/api/livekit/recordings/stop", {
+        egress_id: egressId,
+      });
+      roomRecordingEgressIdRef.current = null;
+    } catch (error) {
+      hasStoppedRoomRecordingRef.current = false;
+      console.error("Failed to finalize LiveKit room recording", error);
+    } finally {
+      setIsFinalizingRecording(false);
+    }
+  }, [isDummyMode]);
+
+  useEffect(() => {
+    return () => {
+      if (isDummyMode || hasStoppedRoomRecordingRef.current) {
+        return;
+      }
+
+      const egressId = roomRecordingEgressIdRef.current;
+      if (!egressId) {
+        return;
+      }
+
+      hasStoppedRoomRecordingRef.current = true;
+      void backendPost("/api/livekit/recordings/stop", {
+        egress_id: egressId,
+      }).catch((error) => {
+        console.error("Failed to stop LiveKit room recording on cleanup", error);
+      });
+    };
+  }, [isDummyMode]);
+
   // LiveKit WebRTC Hooks (only when connected)
-  const lkParticipant = !isDummyMode ? useLocalParticipant().localParticipant : null;
+  const livekitRoom = useMaybeRoomContext();
+  const lkParticipant = livekitRoom?.localParticipant ?? null;
   const isScreenShareEnabled = lkParticipant?.isScreenShareEnabled ?? false;
 
   const toggleMic = useCallback(() => setIsMicEnabled(prev => !prev), [setIsMicEnabled]);
@@ -219,6 +483,115 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
   const toggleScreenShare = useCallback(() => {
      if (lkParticipant) lkParticipant.setScreenShareEnabled(!isScreenShareEnabled, { audio: false }).catch(console.error);
   }, [lkParticipant, isScreenShareEnabled]);
+
+  const signalInterviewEndToAgent = useCallback(() => {
+    if (isDummyMode || !lkParticipant) {
+      return;
+    }
+
+    const payload = {
+      type: "finalize_interview",
+      sessionId: reportLookupId,
+      timestamp: Date.now(),
+    };
+
+    const encoder = new TextEncoder();
+    lkParticipant
+      .publishData(encoder.encode(JSON.stringify(payload)), { reliable: true })
+      .catch((error) => {
+        console.error("Failed to publish interview-end signal to agent", error);
+      });
+  }, [isDummyMode, lkParticipant, reportLookupId]);
+
+  useEffect(() => {
+    if (isDummyMode || !isCodingRound || !lkParticipant) {
+      return;
+    }
+
+    if (Date.now() < suppressIdePublishUntilRef.current) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const payload = {
+        type: "ide_change",
+        code: latestCodeSnapshot.code,
+        language: latestCodeSnapshot.language,
+        source: "candidate",
+        timestamp: Date.now(),
+      };
+
+      const encoder = new TextEncoder();
+      lkParticipant
+        .publishData(encoder.encode(JSON.stringify(payload)), { reliable: true })
+        .catch((error) => {
+          console.error("Failed to publish IDE snapshot to agent", error);
+        });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    isDummyMode,
+    isCodingRound,
+    latestCodeSnapshot.code,
+    latestCodeSnapshot.language,
+    lkParticipant,
+  ]);
+
+  useEffect(() => {
+    if (isDummyMode || !isCodingRound || !livekitRoom) {
+      return;
+    }
+
+    const decoder = new TextDecoder();
+
+    const onDataReceived = (
+      payloadData: Uint8Array | ArrayBuffer | string,
+      _participant?: unknown,
+      _kind?: unknown,
+      topic?: string,
+    ) => {
+      try {
+        if (topic && topic !== "ide_assistant") {
+          return;
+        }
+
+        let payloadText = "";
+        if (payloadData instanceof Uint8Array) {
+          payloadText = decoder.decode(payloadData);
+        } else if (payloadData instanceof ArrayBuffer) {
+          payloadText = decoder.decode(new Uint8Array(payloadData));
+        } else if (typeof payloadData === "string") {
+          payloadText = payloadData;
+        } else {
+          return;
+        }
+
+        const payload = JSON.parse(payloadText);
+        if (!payload || typeof payload !== "object") {
+          return;
+        }
+
+        if (payload.type === "ide_apply") {
+          console.debug("[IDE] Received ide_apply", {
+            topic: topic || "",
+            hasCode: typeof payload.code === "string" && payload.code.length > 0,
+            language: payload.language || "",
+          });
+          applyAssistantCodeUpdate(payload);
+        }
+      } catch (error) {
+        console.error("Failed to parse IDE collaboration event", error);
+      }
+    };
+
+    livekitRoom.on(RoomEvent.DataReceived, onDataReceived);
+    return () => {
+      livekitRoom.off(RoomEvent.DataReceived, onDataReceived);
+    };
+  }, [applyAssistantCodeUpdate, isCodingRound, isDummyMode, livekitRoom]);
 
   // Fullscreen effect listener for IDE
   useEffect(() => {
@@ -264,9 +637,13 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
      }
   }, [isDummyMode, toggleScreenShare]);
 
+  const handleEndInterviewClick = useCallback(() => {
+    signalInterviewEndToAgent();
+    setShowReportModal(true);
+  }, [signalInterviewEndToAgent]);
+
   // --- Arrays for Layout ---
-  const rawRemoteParticipants = useRemoteParticipants();
-  const remoteParticipants = !isDummyMode ? rawRemoteParticipants : [];
+  const remoteParticipants = !isDummyMode && livekitRoom ? Array.from(livekitRoom.remoteParticipants.values()) : [];
   const isAgentSpeaking = remoteParticipants.some(p => p.identity.startsWith('agent-') && p.isSpeaking);
   const isAgentConnected = remoteParticipants.some(p => p.identity.startsWith('agent-'));
   const isAgentListening = isAgentConnected && !isAgentSpeaking;
@@ -275,6 +652,15 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
   const [showReportModal, setShowReportModal] = useState(false);
   const [modalReportData, setModalReportData] = useState<any>(null);
   const [isLoadingReport, setIsLoadingReport] = useState(false);
+
+  useEffect(() => {
+    if (!showReportModal) {
+      return;
+    }
+
+    signalInterviewEndToAgent();
+    void stopRoomRecording();
+  }, [showReportModal, signalInterviewEndToAgent, stopRoomRecording]);
 
   useEffect(() => {
     if (showReportModal) {
@@ -311,7 +697,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
             id?: string;
             overallScore?: number;
             transcript?: Array<{ text?: string }>;
-          }>(`/api/reports/${sessionId || 'latest'}`)
+          }>(`/api/reports/${reportLookupId}`)
             .then((data) => {
               const isPendingReport = String(data?.id || "").startsWith("rep_pending");
               const isTimeoutFallback = isTimeoutFallbackReport(data);
@@ -325,10 +711,18 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
                 return;
               }
 
-              if (!cancelled && data && data.overallScore !== undefined && !isPendingReport && !isTimeoutFallback) {
-                setModalReportData(data);
-                setIsLoadingReport(false);
-                clearInterval(pollInterval);
+              // Also check if id is not a pending report, which means it might be the actual mapped report in DB
+              if (!cancelled && data) {
+                // If the id doesn't start with "rep_pending" and we have an id, it's the real report from the DB
+                if (data.id && !isPendingReport) {
+                  setModalReportData(data);
+                  setIsLoadingReport(false);
+                  clearInterval(pollInterval);
+                } else if (!isPendingReport && data.overallScore !== undefined && !isTimeoutFallback) {
+                  setModalReportData(data);
+                  setIsLoadingReport(false);
+                  clearInterval(pollInterval);
+                }
               }
             })
             .catch(() => {
@@ -347,7 +741,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
         clearInterval(pollInterval);
       };
     }
-  }, [showReportModal, sessionId]);
+  }, [reportLookupId, showReportModal]);
 
   const fallbackInterviewers = [
       { id: "ai-1", name: "Sarah (Lead)", role: "AI Agent", avatar: "https://i.pravatar.cc/150?u=sarah", speaking: isAgentSpeaking, isAI: true },
@@ -708,6 +1102,9 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
                                 <div className="flex items-center gap-3">
                                     <Badge variant="outline" className="font-mono text-[10px] bg-indigo-500/10 text-indigo-500 border-indigo-500/20">Machine Coding</Badge>
                                     <span className="text-sm font-semibold text-foreground/80">Active Editor</span>
+                                    {assistantIdeNotice ? (
+                                      <span className="text-[10px] uppercase tracking-wide text-indigo-500">{assistantIdeNotice}</span>
+                                    ) : null}
                                 </div>
                                 <div className="flex items-center gap-1">
                                     <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-background transition-colors" onClick={(e) => { e.stopPropagation(); setIsIdeCollapsed(true); }}>
@@ -719,7 +1116,14 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
                              <div className="flex-1 min-h-[300px] p-0 relative isolate">
                                 <CodeEditor 
                                     value={code} 
+                                    language={codeLanguage}
                                     onChange={(val) => setCode(val || "")} 
+                                    onLanguageChange={(nextLanguage) => {
+                                      setCodeLanguage(nextLanguage || "javascript");
+                                    }}
+                                    onCodeSnapshot={(nextCode, language) => {
+                                      setLatestCodeSnapshot({ code: nextCode || "", language: language || "javascript" });
+                                    }}
                                     defaultLanguage="javascript" 
                                 />
                              </div>
@@ -903,7 +1307,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
                 size="icon" 
                 className="h-14 w-14 rounded-full shadow-xl hover:bg-red-600 hover:scale-105 transition-all outline-4 outline-red-900/20 shrink-0 mx-2"
                 title="End Interview"
-                onClick={() => setShowReportModal(true)}
+                onClick={handleEndInterviewClick}
               >
                 <PhoneOff className="h-6 w-6" />
               </Button>
@@ -950,6 +1354,11 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
                 ))
               )}
             </div>
+            {isFinalizingRecording && (
+              <div className="px-6 pt-4 text-xs text-muted-foreground">
+                Finalizing interview recording...
+              </div>
+            )}
             <div className="p-6 space-y-3">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Session Highlights</h3>
               <div className="space-y-2">
@@ -974,10 +1383,27 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
               </div>
             </div>
             <div className="flex gap-3 px-6 pb-6">
-              <Button variant="outline" className="flex-1" onClick={() => { setShowReportModal(false); window.location.href = "/"; }}>
+              <Button
+                variant="outline"
+                className="flex-1"
+                disabled={isFinalizingRecording}
+                onClick={async () => {
+                  await stopRoomRecording();
+                  setShowReportModal(false);
+                  router.push("/");
+                }}
+              >
                 Leave Session
               </Button>
-              <Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => { setShowReportModal(false); window.location.href = `/report/${sessionId || 'latest'}`; }}>
+              <Button
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white"
+                disabled={isFinalizingRecording}
+                onClick={async () => {
+                  await stopRoomRecording();
+                  setShowReportModal(false);
+                  router.push(`/report/${reportLookupId}`);
+                }}
+              >
                 <FileText className="mr-2 h-4 w-4" />
                 View Full Report
                 <ArrowRight className="ml-2 h-4 w-4" />

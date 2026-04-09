@@ -9,13 +9,6 @@ class UserDto {
   level: string;
 }
 
-class CreateScheduleDto {
-  title: string;
-  date: string;
-  time: string;
-  interviewer: string;
-}
-
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class DataController {
@@ -63,24 +56,9 @@ export class DataController {
     return this.dataService.getProgressStats();
   }
 
-  @Get('schedule')
-  async getSchedule() {
-    return this.dataService.getSchedule();
-  }
-
-  @Post('schedule')
-  async createSchedule(@Body() body: CreateScheduleDto) {
-    return this.dataService.createScheduledSession(body);
-  }
-
   @Get('report/latest')
   async getLatestReport() {
     return this.dataService.getLatestReport();
-  }
-
-  @Get('community/posts')
-  async getCommunityPosts() {
-    return this.dataService.getCommunityPosts();
   }
 
   @Get('interviews/past')

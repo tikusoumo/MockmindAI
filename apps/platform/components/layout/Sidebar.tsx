@@ -152,22 +152,25 @@ export function Sidebar() {
           className={cn(
             "h-10 w-full justify-start gap-3 px-3 text-destructive hover:text-destructive hover:bg-destructive/10 transition-all duration-200"
           )}
-          asChild
+          onClick={() => {
+            localStorage.removeItem("auth_token");
+            localStorage.removeItem("token");
+            window.location.replace("/auth");
+          }}
+          aria-label="Log out"
         >
-          <Link href="/auth" aria-label="Log out">
-            <LogOut className="h-4 w-4" />
-            <span
-              aria-hidden={collapsed}
-              className={cn(
-                "min-w-0 truncate whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform] duration-300",
-                collapsed
-                  ? "max-w-0 opacity-0 -translate-x-1"
-                  : "max-w-44 opacity-100 translate-x-0"
-              )}
-            >
-              Log Out
-            </span>
-          </Link>
+          <LogOut className="h-4 w-4" />
+          <span
+            aria-hidden={collapsed}
+            className={cn(
+              "min-w-0 truncate whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform] duration-300",
+              collapsed
+                ? "max-w-0 opacity-0 -translate-x-1"
+                : "max-w-44 opacity-100 translate-x-0"
+            )}
+          >
+            Log Out
+          </span>
         </Button>
       </div>
     </div>

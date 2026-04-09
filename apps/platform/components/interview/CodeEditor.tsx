@@ -402,8 +402,10 @@ async function executeCode(
 // ─── Component ────────────────────────────────────────────────────────────────
 interface CodeEditorProps {
   defaultLanguage?: string;
+  language?: string;
   value?: string;
   onChange?: (value: string) => void;
+  onLanguageChange?: (language: string) => void;
   className?: string;
   /** Called whenever code or language changes — lets AI read current state */
   onCodeSnapshot?: (code: string, language: string) => void;
@@ -411,15 +413,18 @@ interface CodeEditorProps {
 
 export function CodeEditor({
   defaultLanguage = "javascript",
+  language: controlledLanguage,
   value,
   onChange,
+  onLanguageChange,
   className,
   onCodeSnapshot,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme();
   const monaco = useMonaco();
 
-  const langDef = LANGUAGES.find((l) => l.id === defaultLanguage) ?? LANGUAGES[0];
+  const initialLanguageId = controlledLanguage || defaultLanguage;
+  const langDef = LANGUAGES.find((l) => l.id === initialLanguageId) ?? LANGUAGES[0];
   const [language, setLanguage] = useState(langDef);
   const [code, setCode] = useState(value ?? langDef.starter);
   const [stdin, setStdin] = useState("");
@@ -441,6 +446,7 @@ export function CodeEditor({
     setResult(null);
     setRunStatus("idle");
     onChange?.(def.starter);
+    onLanguageChange?.(def.id);
     onCodeSnapshot?.(def.starter, def.id);
   };
 
@@ -454,6 +460,30 @@ export function CodeEditor({
   useEffect(() => {
     onCodeSnapshot?.(code, language.id);
   }, [code, language.id]); // eslint-disable-line
+
+  // Keep editor code in sync when parent controls value.
+  useEffect(() => {
+    if (typeof value !== "string") {
+      return;
+    }
+    if (value !== code) {
+      setCode(value);
+    }
+  }, [value, code]);
+
+  // Keep language in sync when parent controls it.
+  useEffect(() => {
+    if (!controlledLanguage || controlledLanguage === language.id) {
+      return;
+    }
+
+    const next = LANGUAGES.find((l) => l.id === controlledLanguage) ?? language;
+    if (next.id !== language.id) {
+      setLanguage(next);
+      setResult(null);
+      setRunStatus("idle");
+    }
+  }, [controlledLanguage, language]);
 
   const handleRun = useCallback(async () => {
     setRunStatus("running");

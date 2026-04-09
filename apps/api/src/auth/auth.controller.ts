@@ -44,6 +44,26 @@ export class AuthController {
     return this.authService.changePassword(req.user.userId, body.currentPassword, body.newPassword);
   }
 
+  @ApiOperation({ summary: 'Initiate forgot password process with OTP' })
+  @Post('forgot-password')
+  async forgotPassword(@Body('email') email: string) {
+    return this.authService.forgotPassword(email);
+  }
+
+  @ApiOperation({ summary: 'Reset password with OTP' })
+  @Post('reset-password')
+  async resetPassword(@Body() body: any) {
+    return this.authService.resetPassword(body.email, body.code, body.password);
+  }
+
+  @ApiOperation({ summary: 'Check if an email exists' })
+  @Get('check-email')
+  async checkEmail(@Req() req: Request) {
+    const email = req.query.email as string;
+    const exists = await this.authService.checkEmailExists(email);
+    return { exists };
+  }
+
   @ApiOperation({ summary: 'Initiate Google OAuth2 flow' })
   @Get('google')
   @UseGuards(AuthGuard('google'))

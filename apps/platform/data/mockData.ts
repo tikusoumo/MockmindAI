@@ -94,6 +94,7 @@ export interface ReportData {
     type: 'Article' | 'Video' | 'Course';
     url: string;
   }[];
+  recordingAudioUrl?: string;
 }
 
 export interface CommunityPost {

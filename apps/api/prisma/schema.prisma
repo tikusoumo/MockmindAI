@@ -27,6 +27,10 @@ model User {
   scheduled     ScheduledSession[]
   studyPlans    StudyPlan[]
   templates     InterviewTemplate[]
+  postLikes     PostLike[]
+  notifications Notification[]
+  practiceRoutines PracticeRoutine[]
+  googleCalendarToken Json?
 
   @@map("users")
 }
@@ -61,6 +65,12 @@ model InterviewTemplate {
 
   documents    Json     @default("[]") // Array of { name, url, size }
   systemPrompt String?  @db.Text
+
+  isPublished  Boolean  @default(false)
+  publishedAt  DateTime?
+  usageCount   Int      @default(0)
+  rating       Float    @default(0)
+  ratingCount  Int      @default(0)
 
   sessions     InterviewSession[]
 
@@ -201,9 +211,22 @@ model ScheduledSession {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   title       String
+  description String?  @db.Text
   date        DateTime
   time        String
   interviewer String
+  
+  status        String   @default("pending")
+  googleEventId String?
+  reminderSent  Boolean  @default(false)
+  isAiSuggested Boolean  @default(false)
+  category      String   @default("practice")
+  recurrence    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  routineId     String?
+  routine       PracticeRoutine? @relation(fields: [routineId], references: [id], onDelete: SetNull)
 
   @@map("scheduled_sessions")
 }
@@ -240,12 +263,13 @@ model CommunityPost {
   authorId  Int      @map("author_id")
   author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
+  title     String   @default("")
   content   String   @db.Text
-  likes     Int      @default(0)
   timestamp DateTime @default(now())
   tags      Json     @default("[]")
 
   comments  CommunityComment[]
+  postLikes PostLike[]
 
   @@map("community_posts")
 }
@@ -265,3 +289,47 @@ model CommunityComment {
   @@map("community_comments")
 }
 
+model PostLike {
+  id        String   @id @default(uuid())
+  postId    String
+  post      CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId])
+  @@map("post_likes")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String   @db.Text
+  read      Boolean  @default(false)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+model PracticeRoutine {
+  id            String   @id @default(uuid())
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?  @db.Text
+  frequency     String   @default("daily")
+  focusAreas    Json     @default("[]")
+  duration      Int      @default(30)
+  startDate     DateTime
+  endDate       DateTime?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  sessions      ScheduledSession[]
+
+  @@map("practice_routines")
+}

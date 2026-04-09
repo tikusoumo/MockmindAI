@@ -4,13 +4,39 @@ import * as React from "react";
 
 const DEFAULT_BACKEND_URL = "http://localhost:8000";
 
-function getBackendUrl(): string {
-  return process.env.NEXT_PUBLIC_BACKEND_URL || DEFAULT_BACKEND_URL;
+const LOCAL_BACKEND_FALLBACKS: Array<[string, string]> = [
+  ["http://localhost:3001", "http://localhost:8000"],
+  ["http://127.0.0.1:3001", "http://127.0.0.1:8000"],
+  ["http://localhost:8000", "http://localhost:3001"],
+  ["http://127.0.0.1:8000", "http://127.0.0.1:3001"],
+];
+
+export function getBackendUrl(): string {
+  return (
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    DEFAULT_BACKEND_URL
+  );
+}
+
+function getBackendCandidates(primary: string): string[] {
+  const candidates = [primary];
+
+  for (const [from, to] of LOCAL_BACKEND_FALLBACKS) {
+    if (primary.startsWith(from)) {
+      candidates.push(primary.replace(from, to));
+    }
+  }
+
+  return Array.from(new Set(candidates));
+}
+
+function normalizePath(path: string): string {
+  return path.startsWith("/") ? path : `/${path}`;
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const backendUrl = getBackendUrl();
-  const url = `${backendUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const pathPart = normalizePath(path);
 
   const token = typeof window !== 'undefined' ? localStorage.getItem("auth_token") : null;
   const headers: HeadersInit = {
@@ -19,13 +45,39 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...(init?.headers ?? {}),
   };
 
-  const res = await fetch(url, {
-    ...init,
-    headers,
-  });
+  let res: Response | null = null;
+  let networkError: unknown;
+
+  for (const backendUrl of getBackendCandidates(getBackendUrl())) {
+    try {
+      res = await fetch(`${backendUrl}${pathPart}`, {
+        ...init,
+        headers,
+      });
+      break;
+    } catch (err) {
+      networkError = err;
+    }
+  }
+
+  if (!res) {
+    if (networkError instanceof Error) {
+      throw networkError;
+    }
+    throw new Error("Network request failed");
+  }
 
   if (!res.ok) {
-    throw new Error(`Request failed: ${res.status} ${res.statusText}`);
+    let message = `Request failed: ${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      message = body?.message ?? message;
+    } catch {
+      // non-JSON body — keep default message
+    }
+    const err = new Error(message) as Error & { status: number };
+    err.status = res.status;
+    throw err;
   }
 
   return (await res.json()) as T;
@@ -99,19 +151,35 @@ export async function backendPut<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function backendPostFormData<T>(path: string, formData: FormData): Promise<T> {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
-  const url = `${backendUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const pathPart = normalizePath(path);
   
   const token = typeof window !== 'undefined' ? localStorage.getItem("auth_token") : null;
   const headers: HeadersInit = {
     ...(token ? { "Authorization": `Bearer ${token}` } : {}),
   };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: formData,
-  });
+  let res: Response | null = null;
+  let networkError: unknown;
+
+  for (const backendUrl of getBackendCandidates(getBackendUrl())) {
+    try {
+      res = await fetch(`${backendUrl}${pathPart}`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+      break;
+    } catch (err) {
+      networkError = err;
+    }
+  }
+
+  if (!res) {
+    if (networkError instanceof Error) {
+      throw networkError;
+    }
+    throw new Error("Network request failed");
+  }
   
   if (!res.ok) {
     const err = await res.text().catch(() => "Unknown error");

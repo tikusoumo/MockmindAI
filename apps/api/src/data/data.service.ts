@@ -57,23 +57,6 @@ const defaultProgressStats = [
   { label: 'Streak Days', value: 7, change: 2, history: [3, 4, 5, 5, 7] },
 ];
 
-const defaultSchedule = [
-  {
-    id: 'session-1',
-    title: 'System Design Mock',
-    date: 'Today',
-    time: '3:00 PM',
-    interviewer: 'Sarah Chen',
-  },
-  {
-    id: 'session-2',
-    title: 'Behavioral Practice',
-    date: 'Tomorrow',
-    time: '10:00 AM',
-    interviewer: 'AI Coach',
-  },
-];
-
 const defaultReportLatest = {
   id: 'report-latest',
   date: '2024-01-15',
@@ -164,28 +147,6 @@ const defaultReportLatest = {
   ],
 };
 
-const defaultCommunityPosts = [
-  {
-    id: 'post-1',
-    author: { name: 'Jennifer K.', avatar: 'https://i.pravatar.cc/150?u=jennifer' },
-    content:
-      'Just passed my Meta interview! The AI coach was super helpful for behavioral prep.',
-    likes: 24,
-    comments: 5,
-    timestamp: '2h ago',
-    tags: ['Success Story', 'Meta'],
-  },
-  {
-    id: 'post-2',
-    author: { name: 'Mark T.', avatar: 'https://i.pravatar.cc/150?u=mark' },
-    content: 'Anyone have tips for system design interviews at startups vs big tech?',
-    likes: 18,
-    comments: 12,
-    timestamp: '5h ago',
-    tags: ['Question', 'System Design'],
-  },
-];
-
 const defaultPastInterviews = [
   { id: 'int-1', title: 'System Design: URL Shortener', date: '2024-01-10', duration: '45 min', score: 88, type: 'Tech' },
   { id: 'int-2', title: 'Behavioral: Leadership', date: '2024-01-08', duration: '35 min', score: 82, type: 'Behavioral' },
@@ -195,7 +156,6 @@ const defaultPastInterviews = [
 @Injectable()
 export class DataService {
   private userData = { ...defaultUser };
-  private scheduleData = [...defaultSchedule];
 
   constructor(private prisma: PrismaService) {}
 
@@ -314,24 +274,6 @@ export class DataService {
     }
   }
 
-  async getSchedule() {
-    try {
-      const schedule = await this.prisma.scheduledSession.findMany();
-      return schedule.length > 0 ? schedule : this.scheduleData;
-    } catch {
-      return this.scheduleData;
-    }
-  }
-
-  async createScheduledSession(data: Omit<typeof defaultSchedule[0], 'id'>) {
-    const newSession = {
-      id: `session-${Date.now()}`,
-      ...data,
-    };
-    this.scheduleData.push(newSession);
-    return newSession;
-  }
-
   async getLatestReport() {
     try {
       const report = await this.prisma.report.findFirst({
@@ -352,15 +294,6 @@ export class DataService {
       return defaultReportLatest;
     } catch {
       return defaultReportLatest;
-    }
-  }
-
-  async getCommunityPosts() {
-    try {
-      const posts = await this.prisma.communityPost.findMany();
-      return posts.length > 0 ? posts : defaultCommunityPosts;
-    } catch {
-      return defaultCommunityPosts;
     }
   }
 

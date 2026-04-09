@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     rag_context_max_chars: int = 2500
     rag_query_max_chars: int = 500
     llm_chat_max_items: int = 12
+    llm_timeout_connect_seconds: float = 15.0
+    llm_timeout_read_seconds: float = 45.0
+    llm_timeout_write_seconds: float = 20.0
+    llm_timeout_pool_seconds: float = 20.0
 
     # --- Modular Provider Configuration ---
     llm_provider: str = "openai"

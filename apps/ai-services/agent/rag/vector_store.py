@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 from typing import Any
 
 from langchain_core.documents import Document
@@ -42,7 +44,38 @@ class TemplateVectorStore:
             timeout=settings.qdrant_timeout_seconds,
         )
         self._embedder: SentenceTransformer | None = None
+        self._query_embedding_cache: dict[str, tuple[float, list[float]]] = {}
+        self._query_embedding_cache_lock = threading.Lock()
+        self._query_embedding_cache_ttl_seconds = 120.0
+        self._query_embedding_cache_max_entries = 256
         self._ensure_collection()
+
+    def _normalize_query(self, query: str) -> str:
+        return " ".join(str(query or "").lower().split())[:500]
+
+    def _get_query_embedding(self, query: str) -> list[float]:
+        cache_key = self._normalize_query(query)
+        now = time.time()
+
+        with self._query_embedding_cache_lock:
+            cached = self._query_embedding_cache.get(cache_key)
+            if cached and now - cached[0] <= self._query_embedding_cache_ttl_seconds:
+                return list(cached[1])
+            if cached:
+                self._query_embedding_cache.pop(cache_key, None)
+
+        vector = self.embedder.encode([query], show_progress_bar=False)[0].tolist()
+
+        with self._query_embedding_cache_lock:
+            if len(self._query_embedding_cache) >= self._query_embedding_cache_max_entries:
+                oldest_key = min(
+                    self._query_embedding_cache,
+                    key=lambda key: self._query_embedding_cache[key][0],
+                )
+                self._query_embedding_cache.pop(oldest_key, None)
+            self._query_embedding_cache[cache_key] = (now, vector)
+
+        return list(vector)
 
     def query_for_interview_sync(
         self,
@@ -51,7 +84,7 @@ class TemplateVectorStore:
         k: int = 5,
     ) -> list[str]:
         """Synchronous interview query helper used by both async and sync call sites."""
-        query_embedding = self.embedder.encode([query], show_progress_bar=False)[0]
+        query_embedding = self._get_query_embedding(query)
 
         query_filter = qdrant_models.Filter(
             must=[
@@ -65,7 +98,7 @@ class TemplateVectorStore:
         if hasattr(self.client, "query_points"):
             response = self.client.query_points(
                 collection_name=self.COLLECTION_NAME,
-                query=query_embedding.tolist(),
+                query=query_embedding,
                 query_filter=query_filter,
                 limit=k,
                 with_payload=True,
@@ -79,7 +112,7 @@ class TemplateVectorStore:
 
         results = self.client.search(
             collection_name=self.COLLECTION_NAME,
-            query_vector=query_embedding.tolist(),
+            query_vector=query_embedding,
             query_filter=query_filter,
             limit=k,
         )

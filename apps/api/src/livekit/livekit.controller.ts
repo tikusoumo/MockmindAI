@@ -30,6 +30,19 @@ class CreateTokenDto {
   metadata?: string;
 }
 
+class StartRoomRecordingDto {
+  @ApiProperty({ description: 'The LiveKit room name to record' })
+  room_name: string;
+
+  @ApiProperty({ description: 'Session ID used to generate deterministic recording file name' })
+  session_id: string;
+}
+
+class StopRoomRecordingDto {
+  @ApiProperty({ description: 'LiveKit egress ID returned by start-room-recording endpoint' })
+  egress_id: string;
+}
+
 @ApiTags('LiveKit Video Calling')
 @Controller('livekit')
 export class LivekitController {
@@ -102,6 +115,49 @@ export class LivekitController {
     } catch (error) {
       throw new HttpException(
         error instanceof Error ? error.message : 'Failed to create agent token',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @ApiOperation({ summary: 'Start room-level interview recording (AI + candidate audio)' })
+  @Post('recordings/start')
+  async startRoomRecording(@Body() body: StartRoomRecordingDto) {
+    if (!this.livekitService.isConfigured) {
+      throw new HttpException(
+        'LiveKit is not configured',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    try {
+      return await this.livekitService.startRoomAudioRecording(
+        body.room_name,
+        body.session_id,
+      );
+    } catch (error) {
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Failed to start room recording',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @ApiOperation({ summary: 'Stop room-level interview recording' })
+  @Post('recordings/stop')
+  async stopRoomRecording(@Body() body: StopRoomRecordingDto) {
+    if (!this.livekitService.isConfigured) {
+      throw new HttpException(
+        'LiveKit is not configured',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    try {
+      return await this.livekitService.stopRoomAudioRecording(body.egress_id);
+    } catch (error) {
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Failed to stop room recording',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

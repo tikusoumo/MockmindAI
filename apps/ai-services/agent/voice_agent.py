@@ -13,6 +13,7 @@ Features:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import io
 import json
@@ -20,12 +21,14 @@ import logging
 import os
 import re
 import threading
+import time
 import urllib.request
 import uuid
 import wave
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from dotenv import load_dotenv
+import httpx
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -50,7 +53,103 @@ logger = logging.getLogger("voice-agent")
 
 load_dotenv()
 
-_RAG_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+
+def _install_livekit_room_destructor_guard() -> None:
+    """Guard older LiveKit Room.__del__ against partially initialized instances."""
+    try:
+        from livekit.rtc.room import Room
+    except Exception:
+        return
+
+    original_del = getattr(Room, "__del__", None)
+    if not callable(original_del):
+        return
+    if getattr(Room, "_safe_destructor_patched", False):
+        return
+
+    def _safe_del(self):
+        # Some older rtc builds can call __del__ on a Room that failed before
+        # _ffi_handle was created, which raises AttributeError during GC.
+        if getattr(self, "_ffi_handle", None) is None:
+            return
+        try:
+            original_del(self)
+        except AttributeError:
+            return
+
+    Room.__del__ = _safe_del
+    setattr(Room, "_safe_destructor_patched", True)
+
+
+_install_livekit_room_destructor_guard()
+
+_RAG_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+_RAG_CACHE_LOCK = threading.Lock()
+_RAG_RESULT_CACHE: dict[str, tuple[float, list[str]]] = {}
+_RAG_CACHE_TTL_SECONDS = 45.0
+_RAG_CACHE_MAX_ENTRIES = 256
+
+
+def _normalize_rag_query(query: str) -> str:
+    return _compact_text(query.lower(), settings.rag_query_max_chars)
+
+
+def _rag_cache_key(target_id: str, query: str, k: int) -> str:
+    return f"{target_id}|{k}|{_normalize_rag_query(query)}"
+
+
+def _get_cached_rag_results(cache_key: str) -> list[str] | None:
+    now = time.time()
+    with _RAG_CACHE_LOCK:
+        cached = _RAG_RESULT_CACHE.get(cache_key)
+        if not cached:
+            return None
+
+        saved_at, chunks = cached
+        if now - saved_at > _RAG_CACHE_TTL_SECONDS:
+            _RAG_RESULT_CACHE.pop(cache_key, None)
+            return None
+        return list(chunks)
+
+
+def _set_cached_rag_results(cache_key: str, chunks: list[str]) -> None:
+    now = time.time()
+    with _RAG_CACHE_LOCK:
+        if len(_RAG_RESULT_CACHE) >= _RAG_CACHE_MAX_ENTRIES:
+            oldest_key = min(_RAG_RESULT_CACHE, key=lambda key: _RAG_RESULT_CACHE[key][0])
+            _RAG_RESULT_CACHE.pop(oldest_key, None)
+        _RAG_RESULT_CACHE[cache_key] = (now, list(chunks))
+
+
+def _lookup_rag_chunks_with_cache(store: Any, target_id: str, query: str, k: int) -> list[str]:
+    cache_key = _rag_cache_key(target_id, query, k)
+    cached = _get_cached_rag_results(cache_key)
+    if cached is not None:
+        logger.debug("RAG cache hit for target '%s'", target_id)
+        return cached
+
+    future = _RAG_EXECUTOR.submit(
+        store.query_for_interview_sync,
+        target_id,
+        query,
+        k,
+    )
+    try:
+        chunks = future.result(timeout=settings.rag_lookup_timeout_seconds)
+    except FutureTimeoutError:
+        logger.warning(
+            "Qdrant RAG lookup timed out for target '%s' after %.1fs",
+            target_id,
+            settings.rag_lookup_timeout_seconds,
+        )
+        return []
+    except Exception as rag_err:
+        logger.warning("Qdrant RAG lookup failed for target '%s': %s", target_id, rag_err)
+        return []
+
+    _set_cached_rag_results(cache_key, chunks)
+    logger.info("Qdrant RAG: Found %d hits for target '%s'", len(chunks), target_id)
+    return chunks
 
 
 def _collect_text_content(content: Any) -> str:
@@ -83,6 +182,74 @@ def _compact_text(value: str, max_chars: int) -> str:
         return normalized
     clipped = normalized[:max_chars].rsplit(" ", 1)[0]
     return (clipped or normalized[:max_chars]) + " ..."
+
+
+_TOOL_CALL_BLOCK_RE = re.compile(
+    r"<\s*tool_call\s*>.*?<\s*/\s*tool_call\s*>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_TOOL_CALL_TAG_RE = re.compile(r"<\s*/?\s*tool_call\s*>", flags=re.IGNORECASE)
+_INTERNAL_TOOL_NAME_RE = re.compile(
+    r"\b(read_candidates_code|update_candidate_code|request_document_context|provide_feedback|get_interview_tip)\b",
+    flags=re.IGNORECASE,
+)
+
+_EDITOR_SURFACE_HINTS = (
+    "editor",
+    "ide",
+    "code tab",
+    "coding tab",
+)
+
+_EDITOR_WRITE_ACTION_HINTS = (
+    "type",
+    "write",
+    "put",
+    "paste",
+    "insert",
+    "edit",
+    "update",
+    "add",
+)
+
+
+def _sanitize_assistant_text_for_speech(text: str) -> str:
+    cleaned = _TOOL_CALL_BLOCK_RE.sub(" ", text or "")
+    cleaned = _TOOL_CALL_TAG_RE.sub(" ", cleaned)
+    cleaned = _INTERNAL_TOOL_NAME_RE.sub(" ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _looks_like_editor_write_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered:
+        return False
+
+    has_editor_hint = any(token in lowered for token in _EDITOR_SURFACE_HINTS)
+    has_write_hint = any(token in lowered for token in _EDITOR_WRITE_ACTION_HINTS)
+    return has_editor_hint and has_write_hint
+
+
+async def _filter_internal_tool_markup(text: AsyncIterable[str]) -> AsyncIterable[str]:
+    """Strip leaked tool-call tags/names from streamed assistant text before TTS."""
+    buffer = ""
+    # Keep a small tail so patterns split across chunks can be matched safely.
+    safety_tail = 256
+
+    async for chunk in text:
+        buffer += chunk
+        if len(buffer) <= safety_tail * 2:
+            continue
+
+        emit_text = buffer[:-safety_tail]
+        sanitized = _sanitize_assistant_text_for_speech(emit_text)
+        if sanitized:
+            yield sanitized
+        buffer = buffer[-safety_tail:]
+
+    tail = _sanitize_assistant_text_for_speech(buffer)
+    if tail:
+        yield tail
 
 
 def _cap_context_chunks(
@@ -197,27 +364,71 @@ class _KokoroChunkedStream(lk_tts.ChunkedStream):
             "response_format": "wav",
         }
 
-        response = await asyncio.to_thread(
-            requests.post,
-            f"{self._kokoro_tts.base_url}/audio/speech",
-            json=payload,
-            timeout=20,
-        )
-        response.raise_for_status()
+        candidate_base_urls = [self._kokoro_tts.base_url]
+        if "host.docker.internal" in self._kokoro_tts.base_url:
+            candidate_base_urls.append(self._kokoro_tts.base_url.replace("host.docker.internal", "kokoro"))
+        elif "localhost" in self._kokoro_tts.base_url:
+            candidate_base_urls.append(self._kokoro_tts.base_url.replace("localhost", "kokoro"))
+            if os.path.exists("/.dockerenv"):
+                candidate_base_urls.append(
+                    self._kokoro_tts.base_url.replace("localhost", "host.docker.internal")
+                )
+        elif "kokoro" in self._kokoro_tts.base_url:
+            if os.path.exists("/.dockerenv"):
+                candidate_base_urls.append(
+                    self._kokoro_tts.base_url.replace("kokoro", "host.docker.internal")
+                )
+            candidate_base_urls.append(self._kokoro_tts.base_url.replace("kokoro", "localhost"))
 
-        with io.BytesIO(response.content) as wav_io:
-            with wave.open(wav_io, "rb") as wav_file:
-                sample_rate = wav_file.getframerate()
-                num_channels = wav_file.getnchannels()
-                pcm_bytes = wav_file.readframes(wav_file.getnframes())
+        # Keep insertion order while removing duplicates.
+        candidate_base_urls = list(dict.fromkeys(candidate_base_urls))
 
-        output_emitter.initialize(
-            request_id=f"kokoro-{uuid.uuid4().hex[:8]}",
-            sample_rate=sample_rate,
-            num_channels=num_channels,
-            mime_type="audio/pcm",
+        last_error: Exception | None = None
+        attempts_per_endpoint = 2
+        for endpoint in candidate_base_urls:
+            for attempt in range(1, attempts_per_endpoint + 1):
+                try:
+                    response = await asyncio.to_thread(
+                        requests.post,
+                        f"{endpoint}/audio/speech",
+                        json=payload,
+                        timeout=(5, 45),
+                    )
+                    response.raise_for_status()
+
+                    with io.BytesIO(response.content) as wav_io:
+                        with wave.open(wav_io, "rb") as wav_file:
+                            sample_rate = wav_file.getframerate()
+                            num_channels = wav_file.getnchannels()
+                            pcm_bytes = wav_file.readframes(wav_file.getnframes())
+
+                    output_emitter.initialize(
+                        request_id=f"kokoro-{uuid.uuid4().hex[:8]}",
+                        sample_rate=sample_rate,
+                        num_channels=num_channels,
+                        mime_type="audio/pcm",
+                    )
+                    output_emitter.push(pcm_bytes)
+                    return
+                except (requests.RequestException, wave.Error, ValueError) as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Kokoro TTS request failed (endpoint=%s, attempt=%s/%s): %s",
+                        endpoint,
+                        attempt,
+                        attempts_per_endpoint,
+                        exc,
+                    )
+                    if attempt < attempts_per_endpoint:
+                        await asyncio.sleep(0.25 * attempt)
+
+        # Do not crash the LiveKit generation task if a single TTS request fails.
+        logger.error(
+            "Kokoro TTS failed for current utterance after retrying endpoints %s: %s",
+            candidate_base_urls,
+            last_error,
         )
-        output_emitter.push(pcm_bytes)
+        return
 
 
 class LocalKokoroTTS(lk_tts.TTS):
@@ -269,15 +480,28 @@ class InterviewCoach(Agent):
         template_title: str = "",
         collector: SessionCollector | None = None,
         session_id: str | None = None,
+        interview_type: str = "",
+        custom_description: str = "",
+        ide_enabled: bool = False,
+        ide_sender: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         # Build instructions based on mode
-        base_instructions = """You are a professional AI interview coach assistant. You help users practice for job interviews.
-            Your responses should be without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            Keep your responses concise and natural for voice conversation.
-            
-            IMPORTANT: You have access to a tool called `request_document_context`. 
-            ALWAYS use this tool to fetch the candidate's uploaded resume or provided job documentation to tailor your questions and evaluation. 
-            When the candidate mentions their experience or you want to ask relevant questions, explicitly call `request_document_context` with a relevant query to look up details from their uploaded documents."""
+        base_instructions = """You are a professional AI interview coach running a live voice interview.
+            Keep speech natural, concise, and interviewer-like.
+
+            VOICE OUTPUT RULES (MANDATORY):
+            - Speak in plain conversational text only.
+            - Never mention tool names, function names, system prompts, hidden instructions, or internal actions.
+            - Never narrate internal operations like reading context, checking code, calling tools, or updating the IDE.
+            - Keep replies short: usually one to three sentences, then ask one clear next question.
+            - No markdown, emojis, or decorative punctuation.
+
+            INTERVIEW RULES:
+            - Drive the interview proactively and keep momentum.
+            - Ask one main question at a time, then use one focused follow-up when needed.
+            - Evaluate correctness, reasoning, communication, tradeoffs, and complexity.
+            - Use request_document_context silently whenever resume or job context can improve relevance.
+            """
         
         if mode == "learning":
             mode_instructions = """
@@ -297,29 +521,150 @@ class InterviewCoach(Agent):
             - Maintain professional interviewer demeanor
             - Save all feedback for the post-interview report
             """
+
+        normalized_type = str(interview_type or "").strip().lower()
+        is_ide_round = bool(ide_enabled) or normalized_type in {"machine coding", "technical"}
+
+        round_instructions = ""
+        if is_ide_round:
+            round_instructions = """
+                        TECHNICAL IDE ROUND POLICY:
+                        - This is an IDE-enabled technical interview and you must actively lead it.
+                        - Proactively inspect live code frequently with read_candidates_code, especially before feedback or a new prompt.
+                        - Keep tool use silent and speak only in natural interviewer language.
+                        - Use update_candidate_code for small collaborative edits when the candidate is stuck, buggy, or asks for help.
+                        - If you say you changed code, you must first call update_candidate_code in that same turn.
+                        - Never claim an IDE edit was applied unless update_candidate_code succeeded.
+                        - Never speak internal issues like 'tool unavailable' or 'editor not accessible'; ask the candidate to continue typing while you review.
+                        - For IDE collaboration requests (type/write/put in editor), immediately use update_candidate_code instead of document lookup.
+                        - Do not use request_document_context in IDE rounds unless the candidate explicitly asks about resume or job-description content.
+                        - Prefer incremental patches over full rewrites and explain the intent of each change briefly.
+                        - Always ask for a brute-force idea first, then an optimized approach.
+                        - Always check edge cases, test coverage, and time/space complexity.
+                        - If code is empty, ask for a clear function signature and a short implementation plan first.
+
+                        DSA COVERAGE REQUIREMENTS:
+                        - Cover these topics naturally across the round as time permits:
+                            arrays and strings, hashing, two pointers, sliding window,
+                            stacks and queues, trees and binary trees, BST,
+                            graphs, binary search, greedy, and dynamic programming.
+                        - Move from medium to harder variants when the candidate performs well.
+                        - After each meaningful code step, ask exactly one concise next-step question.
+            """
+
+        custom_prompt_instructions = ""
+        safe_custom_description = _compact_text(custom_description, 1600)
+        if safe_custom_description:
+            custom_prompt_instructions = (
+                "\nCUSTOM INTERVIEW BRIEF (SESSION-SPECIFIC, HIGHEST PRIORITY):\n"
+                f"{safe_custom_description}\n"
+                "Treat the brief above as interview context and instruction for this session."
+            )
         
         super().__init__(
-            instructions=base_instructions + mode_instructions,
+            instructions=base_instructions + mode_instructions + round_instructions + custom_prompt_instructions,
         )
         
         self.mode = mode
         self.template_id = template_id
         self.session_id = session_id
         self.template_title = template_title
+        self.interview_type = interview_type
+        self.custom_description = safe_custom_description
+        self.ide_enabled = is_ide_round
+        self._ide_sender = ide_sender
         self.collector = collector
         self.current_question_idx = 0
         self.questions: list[str] = []
         self.current_ide_content: str = ""
+        self.current_ide_language: str = "javascript"
+        self._doc_query_last_seen: dict[str, float] = {}
 
     @function_tool()
     async def read_candidates_code(
         self,
         context: RunContext,
     ) -> str:
-        """Read the live code from the candidate's IDE. Use this when the user asks you to look at their code or when you need to evaluate their progress in a machine coding round."""
+        """Read the live code from the candidate's IDE. Use this frequently in technical rounds to evaluate progress, correctness, and next steps."""
+        logger.info(
+            "read_candidates_code invoked (ide_enabled=%s, chars=%d, language=%s)",
+            self.ide_enabled,
+            len(self.current_ide_content or ""),
+            self.current_ide_language,
+        )
         if not self.current_ide_content.strip():
             return "The IDE is currently empty or the candidate hasn't typed anything yet."
         return f"Here is the candidate's current code:\n\n{self.current_ide_content}"
+
+    @function_tool()
+    async def update_candidate_code(
+        self,
+        context: RunContext,
+        code: str,
+        explanation: str = "",
+        intent: str = "replace",
+        typing_ms: int = 1400,
+    ) -> str:
+        """Apply collaborative code edits in the candidate's live IDE.
+
+        Args:
+            code: Code content to apply. For intent=replace this becomes full editor content; for intent=append this is appended.
+            explanation: Short note that explains why this edit is being made.
+            intent: Either 'replace' (default) or 'append'.
+            typing_ms: Optional typing animation duration in milliseconds (0 to disable).
+        """
+        logger.info(
+            "update_candidate_code invoked (ide_enabled=%s, intent=%s, chars=%d, language=%s)",
+            self.ide_enabled,
+            intent,
+            len(code or ""),
+            self.current_ide_language,
+        )
+        if not self.ide_enabled:
+            return "IDE collaboration is disabled for this interview round."
+
+        if not self._ide_sender:
+            return "IDE collaboration channel is not available right now."
+
+        sanitized_code = code or ""
+        if not sanitized_code.strip():
+            return "No code content was provided for IDE update."
+
+        if len(sanitized_code) > 20000:
+            sanitized_code = sanitized_code[:20000]
+
+        normalized_intent = "append" if str(intent or "").strip().lower() == "append" else "replace"
+        clamped_typing_ms = max(0, min(int(typing_ms or 0), 5000))
+        note = _compact_text(explanation or "", 220) if explanation else ""
+
+        payload = {
+            "type": "ide_apply",
+            "intent": normalized_intent,
+            "code": sanitized_code,
+            "language": self.current_ide_language or "javascript",
+            "explanation": note,
+            "typing_ms": clamped_typing_ms,
+            "timestamp": int(time.time() * 1000),
+        }
+
+        try:
+            await self._ide_sender(payload)
+            logger.info(
+                "Published IDE apply event (intent=%s, chars=%d, lang=%s)",
+                normalized_intent,
+                len(sanitized_code),
+                payload["language"],
+            )
+        except Exception as e:
+            logger.warning("Failed to publish collaborative IDE edit: %s", e)
+            return "Unable to apply IDE update right now due to a channel issue."
+
+        if normalized_intent == "append":
+            self.current_ide_content = f"{self.current_ide_content}{sanitized_code}"
+        else:
+            self.current_ide_content = sanitized_code
+
+        return "IDE update applied."
 
     @function_tool()
     async def get_interview_tip(
@@ -384,25 +729,39 @@ class InterviewCoach(Agent):
         """
         from .rag.vector_store import get_vector_store
 
+        query_key = _normalize_rag_query(query)
+        now = time.monotonic()
+        last_seen = self._doc_query_last_seen.get(query_key)
+        if last_seen is not None and (now - last_seen) < 10.0:
+            logger.info("Skipping duplicate request_document_context call for query: %s", query_key)
+            return "No additional document context for the same query right now. Continue the interview naturally."
+
+        self._doc_query_last_seen[query_key] = now
+        if len(self._doc_query_last_seen) > 64:
+            oldest_key = min(self._doc_query_last_seen, key=self._doc_query_last_seen.get)
+            self._doc_query_last_seen.pop(oldest_key, None)
+
         store = get_vector_store()
         try:
-            # Query both the template (if applicable) and this specific session's uploaded docs
-            results = []
+            # Query both the template (if applicable) and this specific session's uploaded docs.
+            results: list[str] = []
+            targets: list[str] = []
             if self.template_id:
-                template_results = await store.query_for_interview(self.template_id, query)
-                if template_results:
-                   results.extend(template_results)
-                   
-            # Also check user uploads bound strictly to this session
+                targets.append(self.template_id)
             if self.session_id:
-               session_results = await store.query_for_interview(self.session_id, query)
-               # Fallback legacy lookup just in case
-               session_legacy_results = await store.query_for_interview(f"session_{self.session_id}", query)
-               if session_results:
-                   results.extend(session_results)
-               if session_legacy_results:
-                   results.extend(session_legacy_results)
-                   
+                targets.append(self.session_id)
+                targets.append(f"session_{self.session_id}")
+
+            for target_id in list(dict.fromkeys(targets)):
+                hits = _lookup_rag_chunks_with_cache(
+                    store,
+                    target_id,
+                    query,
+                    settings.rag_lookup_k,
+                )
+                if hits:
+                    results.extend(hits)
+
             if not results:
                 return "I couldn't find any relevant information about that in the uploaded documents."
 
@@ -449,6 +808,23 @@ def prewarm(proc: JobProcess):
     if settings.rag_prewarm_embedder:
         threading.Thread(target=_prewarm_rag_embedder, name="rag-prewarm", daemon=True).start()
 
+    def _prewarm_report_analyzers() -> None:
+        if not settings.analysis_enabled:
+            return
+        try:
+            from .analysis import ReportGenerator
+
+            _ = ReportGenerator()
+            logger.info("Prewarmed report analyzers")
+        except Exception as e:
+            logger.warning("Failed to prewarm report analyzers: %s", e)
+
+    threading.Thread(
+        target=_prewarm_report_analyzers,
+        name="report-prewarm",
+        daemon=True,
+    ).start()
+
 
 server.setup_fnc = prewarm
 
@@ -493,6 +869,12 @@ def create_model_components(settings):
         return openai.STT(model="whisper-1")
 
     def _openai_llm_fallback():
+        llm_timeout = httpx.Timeout(
+            connect=settings.llm_timeout_connect_seconds,
+            read=settings.llm_timeout_read_seconds,
+            write=settings.llm_timeout_write_seconds,
+            pool=settings.llm_timeout_pool_seconds,
+        )
         llama_url = _normalize_local_url(settings.llama_base_url)
         if settings.use_local_ai or (
             llama_url
@@ -506,8 +888,9 @@ def create_model_components(settings):
                 base_url=llama_url,
                 model=settings.llama_model,
                 api_key="no-key-needed",
+                timeout=llm_timeout,
             )
-        return openai.LLM(model="gpt-4o")
+        return openai.LLM(model="gpt-4o", timeout=llm_timeout)
 
     def _openai_tts_fallback():
         kokoro_url = _normalize_local_url(settings.kokoro_base_url)
@@ -643,16 +1026,36 @@ async def voice_agent(ctx: JobContext):
         if participant.metadata:
             metadata = parse_room_metadata(participant.metadata)
             break
+
+    if not metadata:
+        for _ in range(10):
+            await asyncio.sleep(0.3)
+            for participant in ctx.room.remote_participants.values():
+                if participant.metadata:
+                    metadata = parse_room_metadata(participant.metadata)
+                    break
+            if metadata:
+                break
     
     mode = metadata.get("mode", "strict")
     template_id = metadata.get("templateId")
-    session_id = template_id # Using template_id as session id to match the FE assignment logic
-    if ctx.room.name.startswith("interview-"):
-       session_id = ctx.room.name.replace("interview-", "")
+    session_id = metadata.get("sessionId") or template_id
+    if not session_id and ctx.room.name.startswith("interview-"):
+        session_id = ctx.room.name.replace("interview-", "")
     template_title = metadata.get("templateTitle", "Interview")
     participant_name = metadata.get("participantName", "Candidate")
+    interview_type = metadata.get("interviewType", "")
+    custom_description = metadata.get("customDescription", "")
+    ide_enabled = bool(metadata.get("ideEnabled", False))
     
-    logger.info(f"Interview mode: {mode}, session/template: {session_id}, template title: {template_title}")
+    logger.info(
+        "Interview mode: %s, session/template: %s, template title: %s, type: %s, ide_enabled: %s",
+        mode,
+        session_id,
+        template_title,
+        interview_type or "(unspecified)",
+        ide_enabled,
+    )
 
     # Initialize session collector
     collector = SessionCollector(
@@ -682,8 +1085,11 @@ async def voice_agent(ctx: JobContext):
     
     # Define a wrapper for the chat method that handles the async nature of LLMStream
     original_chat = llm.chat
+    last_proactive_rag_query = ""
+    last_proactive_rag_at = 0.0
     
     def intercepted_chat(_bound_llm, *args, **kwargs):
+        nonlocal last_proactive_rag_query, last_proactive_rag_at
         chat_ctx = kwargs.get("chat_ctx")
         args_list = list(args)
         chat_ctx_in_args = False
@@ -749,58 +1155,50 @@ async def voice_agent(ctx: JobContext):
                     query = _collect_text_content(user_msg.content)
                     query = _compact_text(query, settings.rag_query_max_chars)
                     if not query:
-                        return original_chat(**kwargs)
+                        return original_chat(*args, **kwargs)
+
+                    if ide_enabled:
+                        logger.debug("Skipping proactive RAG for IDE-enabled round.")
+                        return original_chat(*args, **kwargs)
+
+                    if _looks_like_editor_write_request(query):
+                        logger.debug("Skipping proactive RAG for editor-write intent query.")
+                        return original_chat(*args, **kwargs)
+
+                    now_monotonic = time.monotonic()
+                    query_key = query.lower()
+                    if query_key == last_proactive_rag_query and (now_monotonic - last_proactive_rag_at) < 2.5:
+                        logger.debug("Skipping duplicate proactive RAG lookup for repeated query.")
+                        return original_chat(*args, **kwargs)
+
+                    last_proactive_rag_query = query_key
+                    last_proactive_rag_at = now_monotonic
                     
                     # We need to reach into the vector store
                     from .rag.vector_store import get_vector_store
                     
                     store = get_vector_store()
-                    
-                    results = []
-                    
-                    def lookup(tid):
-                        future = _RAG_EXECUTOR.submit(
-                            store.query_for_interview_sync,
-                            tid,
+
+                    results: list[str] = []
+                    targets: list[str] = []
+                    if template_id:
+                        targets.append(template_id)
+                    if session_id and session_id != template_id:
+                        targets.append(session_id)
+                    if session_id:
+                        targets.append(f"session_{session_id}")
+                    targets = list(dict.fromkeys(targets))
+
+                    logger.info("Proactive RAG intercept triggered. Query: %s", query)
+                    for target_id in targets:
+                        chunks = _lookup_rag_chunks_with_cache(
+                            store,
+                            target_id,
                             query,
                             settings.rag_lookup_k,
                         )
-                        try:
-                            chunks = future.result(timeout=settings.rag_lookup_timeout_seconds)
-                        except FutureTimeoutError:
-                            logger.warning(
-                                "Qdrant RAG lookup timed out for target '%s' after %.1fs",
-                                tid,
-                                settings.rag_lookup_timeout_seconds,
-                            )
-                            return []
-                        except Exception as rag_err:
-                            logger.warning("Qdrant RAG lookup failed for target '%s': %s", tid, rag_err)
-                            return []
-
-                        logger.info("Qdrant RAG: Found %d hits for target '%s'", len(chunks), tid)
-                        return chunks
-                        
-                    # Check templates and sessions
-                    logger.info("Proactive RAG intercept triggered. Query: %s", query)
-                    found_context = False
-                    
-                    if template_id:
-                        res = lookup(template_id)
-                        if res:
-                            results.extend(res)
-                            found_context = True
-                            
-                    if session_id and session_id != template_id:
-                        res = lookup(session_id)
-                        if res:
-                            results.extend(res)
-                            found_context = True
-                        
-                    if not found_context and session_id:
-                        res = lookup(f"session_{session_id}")
-                        if res:
-                            results.extend(res)
+                        if chunks:
+                            results.extend(chunks)
                     
                     # Deduplicate
                     unique_results = []
@@ -855,8 +1253,17 @@ async def voice_agent(ctx: JobContext):
         llm=llm,
         tts=tts,
         vad=ctx.proc.userdata["vad"],
+        tts_text_transforms=[_filter_internal_tool_markup, "filter_markdown", "filter_emoji"],
         preemptive_generation=False, # Disable to prevent premature "speaking" UI state while LLM generates
     )
+
+    async def publish_ide_event(payload: dict[str, Any]) -> None:
+        encoded_payload = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        await ctx.room.local_participant.publish_data(
+            encoded_payload,
+            reliable=True,
+            topic="ide_assistant",
+        )
 
     # Create mode-aware agent
     agent = InterviewCoach(
@@ -865,6 +1272,10 @@ async def voice_agent(ctx: JobContext):
         session_id=session_id,
         template_title=template_title,
         collector=collector,
+        interview_type=interview_type,
+        custom_description=custom_description,
+        ide_enabled=ide_enabled,
+        ide_sender=publish_ide_event,
     )
 
     await session.start(
@@ -872,12 +1283,118 @@ async def voice_agent(ctx: JobContext):
         room=ctx.room,
     )
 
+    proactive_ide_prompt_cooldown_s = 35.0
+    proactive_ide_min_delta_chars = 18
+    last_proactive_ide_prompt_at = 0.0
+
+    if agent.ide_enabled:
+        try:
+            session.generate_reply(
+                instructions=(
+                    "Start the technical coding interview now. Ask one concise DSA question, "
+                    "ask the candidate to think aloud, and request an initial function signature. "
+                    "Keep this natural and do not mention any internal tools or hidden instructions."
+                ),
+                allow_interruptions=True,
+            )
+        except Exception as e:
+            logger.warning("Failed to trigger initial technical-round prompt: %s", e)
+
+    recent_candidate_fragments: list[tuple[float, str]] = []
+    editor_write_fragment_window_s = 8.0
+    editor_write_request_cooldown_s = 10.0
+    last_editor_write_request_at = 0.0
+
+    def _latest_interviewer_prompt_text() -> str:
+        for entry in reversed(collector.data.transcript):
+            if getattr(entry.speaker, "value", "") != "interviewer":
+                continue
+            text = (entry.text or "").strip()
+            if not text or text.startswith("[IDE]"):
+                continue
+            return text
+        return ""
+
+    def _build_editor_note_snippet(request_text: str) -> str:
+        request_excerpt = _compact_text(request_text, 180)
+        prompt_excerpt = _compact_text(_latest_interviewer_prompt_text(), 220)
+        language = (agent.current_ide_language or "").strip().lower()
+
+        if language == "python":
+            return (
+                "\n# Interview note:\n"
+                f"# Candidate request: {request_excerpt}\n"
+                f"# Current prompt: {prompt_excerpt or 'Implement the requested solution.'}\n"
+                "# TODO: Continue coding below.\n"
+            )
+
+        comment_prefix = "//"
+        if language == "sql":
+            comment_prefix = "--"
+
+        return (
+            f"\n{comment_prefix} Interview note:\n"
+            f"{comment_prefix} Candidate request: {request_excerpt}\n"
+            f"{comment_prefix} Current prompt: {prompt_excerpt or 'Implement the requested solution.'}\n"
+            f"{comment_prefix} TODO: Continue coding below.\n"
+        )
+
+    async def _apply_editor_write_fallback(request_text: str) -> None:
+        snippet = _build_editor_note_snippet(request_text)
+        payload = {
+            "type": "ide_apply",
+            "intent": "append",
+            "code": snippet,
+            "language": agent.current_ide_language or "javascript",
+            "explanation": "Added the request context in the editor so we can continue coding.",
+            "typing_ms": 900,
+            "timestamp": int(time.time() * 1000),
+        }
+
+        try:
+            await publish_ide_event(payload)
+            agent.current_ide_content = f"{agent.current_ide_content}{snippet}"
+            logger.info(
+                "Applied direct IDE fallback write from transcript request (chars=%d, language=%s)",
+                len(snippet),
+                payload["language"],
+            )
+            session.generate_reply(
+                instructions=(
+                    "Acknowledge briefly that you added content in the editor and continue the interview. "
+                    "Do not mention tools or internal operations."
+                ),
+                allow_interruptions=True,
+            )
+        except Exception as e:
+            logger.warning("Failed to apply direct IDE fallback write: %s", e)
+
     @session.on("user_input_transcribed")
     def on_user_input_transcribed(ev):
+        nonlocal last_editor_write_request_at
         transcript = getattr(ev, "transcript", "")
         is_final = getattr(ev, "is_final", True)
         if is_final and transcript:
             collector.add_candidate_message(transcript)
+
+            if agent.ide_enabled:
+                now_monotonic = time.monotonic()
+                recent_candidate_fragments.append((now_monotonic, transcript))
+                recent_candidate_fragments[:] = [
+                    item
+                    for item in recent_candidate_fragments
+                    if (now_monotonic - item[0]) <= editor_write_fragment_window_s
+                ]
+
+                merged_transcript = " ".join(fragment for _, fragment in recent_candidate_fragments).strip()
+                has_editor_write_intent = _looks_like_editor_write_request(transcript) or _looks_like_editor_write_request(merged_transcript)
+
+                if has_editor_write_intent:
+                    if (now_monotonic - last_editor_write_request_at) >= editor_write_request_cooldown_s:
+                        last_editor_write_request_at = now_monotonic
+                        asyncio.create_task(_apply_editor_write_fallback(merged_transcript or transcript))
+                    else:
+                        logger.debug("Skipped direct IDE fallback write due to cooldown.")
 
     @session.on("conversation_item_added")
     def on_conversation_item_added(ev):
@@ -889,43 +1406,40 @@ async def voice_agent(ctx: JobContext):
             return
 
         text = _collect_text_content(getattr(item, "content", "")).strip()
+        text = _sanitize_assistant_text_for_speech(text)
         if text:
             collector.add_interviewer_message(text, is_question="?" in text)
 
-    @ctx.room.on("data_received")
-    def on_data_received(data_packet):
-        try:
-            payload = json.loads(data_packet.data.decode("utf-8"))
-            if payload.get("type") == "ide_change":
-                agent.current_ide_content = payload.get("code", "")
-                logger.debug("Received updated IDE content from data channel.")
-        except Exception as e:
-            logger.error(f"Error parsing data channel message: {e}")
+    report_generation_started = False
 
-    @ctx.room.on("disconnected")
-    def on_disconnected(*args):
-        logger.info("Room disconnected, generating final report via webhook...")
+    def trigger_report_generation(reason: str) -> None:
+        nonlocal report_generation_started
+        if report_generation_started:
+            logger.debug("Skipping duplicate report generation trigger (%s)", reason)
+            return
+
+        report_generation_started = True
+        logger.info("Finalizing interview report (%s)...", reason)
         session_data = collector.end_session()
-        
+
         # Store it locally just in case
         try:
             from .routers.reports import store_session
+
             store_session(session_data)
         except ImportError:
             pass
-            
-        import asyncio
-        import urllib.request
-        
+
         async def push_webhook():
             try:
                 from .analysis import ReportGenerator
+
                 generator = ReportGenerator()
-                report = generator.generate(session_data)
+                report = await asyncio.to_thread(generator.generate, session_data)
                 payload = report.to_dict()
                 payload["session_id"] = session_id
                 payload["sessionId"] = session_id
-                
+
                 # Use standard library to avoid missing httpx/aiohttp in worker
                 api_url = "http://api:8000/api/reports/webhook"
                 req = urllib.request.Request(
@@ -934,20 +1448,98 @@ async def voice_agent(ctx: JobContext):
                     headers={"Content-Type": "application/json"},
                     method="POST"
                 )
-                
+
                 # Run in thread so it doesn't block
-                loop = asyncio.get_event_loop()
                 def make_req():
                     with urllib.request.urlopen(req, timeout=30) as response:
                         return response.status
-                
-                status = await loop.run_in_executor(None, make_req)
-                logger.info(f"Webhook pushed successfully: {status}")
+
+                status = await asyncio.to_thread(make_req)
+                logger.info("Webhook pushed successfully: %s", status)
             except Exception as e:
-                logger.error(f"Failed to push webhook: {e}")
-                
+                logger.error("Failed to push webhook: %s", e)
+
         # Fire and forget
         asyncio.create_task(push_webhook())
+
+    @ctx.room.on("data_received")
+    def on_data_received(data_packet):
+        nonlocal last_proactive_ide_prompt_at
+        try:
+            raw_data = data_packet.data
+            if isinstance(raw_data, (bytes, bytearray)):
+                payload_text = raw_data.decode("utf-8")
+            elif isinstance(raw_data, str):
+                payload_text = raw_data
+            else:
+                logger.debug("Ignored unsupported data packet payload type: %s", type(raw_data).__name__)
+                return
+
+            payload = json.loads(payload_text)
+            if payload.get("type") == "ide_change":
+                previous_code = agent.current_ide_content
+                source = str(payload.get("source", "")).strip().lower()
+                incoming_code = payload.get("code", "")
+                agent.current_ide_content = incoming_code
+                incoming_language = payload.get("language")
+                if isinstance(incoming_language, str) and incoming_language.strip():
+                    agent.current_ide_language = incoming_language
+                logger.info(
+                    "Received IDE change event (source=%s, chars=%d, language=%s)",
+                    source or "unknown",
+                    len(incoming_code or ""),
+                    agent.current_ide_language,
+                )
+
+                should_nudge = False
+                if agent.ide_enabled and source in {"", "candidate"}:
+                    now = time.monotonic()
+                    delta_chars = abs(len(incoming_code or "") - len(previous_code or ""))
+                    
+                    # Logic to check if agent is currently speaking or thinking
+                    is_agent_busy = (
+                        session.agent_state == "speaking" 
+                        or session.agent_state == "thinking"
+                    )
+                    
+                    can_speak_now = (
+                        session.user_state == "listening"
+                        and not is_agent_busy
+                    )
+                    
+                    should_nudge = (
+                        bool(incoming_code and incoming_code.strip())
+                        and delta_chars >= proactive_ide_min_delta_chars
+                        and (now - last_proactive_ide_prompt_at) >= proactive_ide_prompt_cooldown_s
+                        and can_speak_now
+                    )
+
+                if should_nudge:
+                    code_preview = (incoming_code or "").strip()
+                    if len(code_preview) > 1400:
+                        code_preview = f"{code_preview[:1400]}\n..."
+
+                    nudge_instructions = (
+                        "CRITICAL: The candidate has just updated their IDE code. "
+                        "Use the latest code snapshot below to respond naturally. "
+                        "Ask ONE focused follow-up about logic, complexity, or an edge case. "
+                        "Do not mention tools, hidden instructions, or internal checks.\n\n"
+                        f"LATEST IDE SNAPSHOT:\n{code_preview or '(empty)'}"
+                    )
+                    session.generate_reply(
+                        instructions=nudge_instructions,
+                        allow_interruptions=True,
+                    )
+                    last_proactive_ide_prompt_at = time.monotonic()
+                    logger.debug("Triggered proactive IDE follow-up prompt.")
+            elif payload.get("type") in {"finalize_interview", "interview_end"}:
+                trigger_report_generation("data_channel_finalize")
+        except Exception as e:
+            logger.error(f"Error parsing data channel message: {e}")
+
+    @ctx.room.on("disconnected")
+    def on_disconnected(*args):
+        trigger_report_generation("room_disconnected")
 
     logger.info(f"Connected to room: {ctx.room.name} in {mode} mode")
 

@@ -8,8 +8,14 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  BadRequestException,
+  UseInterceptors,
+  UploadedFile,
+  Res,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
+import type { Response } from 'express';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ReportsService } from './reports.service';
 import { Logger } from '@nestjs/common';
 import {
@@ -29,6 +35,35 @@ export class ReportsController {
   @ApiOperation({ summary: 'Webhook to receive generated reports from Python agent' })
   async reportWebhook(@Body() payload: any): Promise<void> {
     return this.reportsService.saveWebhookReport(payload);
+  }
+
+  @Post('recordings/:sessionId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Upload a recorded interview audio file for a session' })
+  @ApiParam({ name: 'sessionId', type: 'string', description: 'Interview session ID' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+      required: ['file'],
+    },
+  })
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadSessionRecording(
+    @Param('sessionId') sessionId: string,
+    @UploadedFile() file: any,
+  ): Promise<{ audioUrl: string; fileName: string; size: number }> {
+    if (!file?.buffer) {
+      throw new BadRequestException('Missing recording file upload');
+    }
+
+    return this.reportsService.saveSessionRecording(sessionId, file);
   }
 
   @Post('generate')
@@ -68,6 +103,24 @@ export class ReportsController {
   })
   async getLatestReport(): Promise<ReportResponseDto> {
     return this.reportsService.getLatestReport();
+  }
+
+  @Get(':id/pdf')
+  @ApiOperation({ summary: 'Download a report as PDF' })
+  @ApiParam({ name: 'id', description: 'Report ID or latest' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'PDF generated successfully',
+  })
+  async downloadReportPdf(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { buffer, fileName } = await this.reportsService.generateReportPdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    res.send(buffer);
   }
 
   @Get(':id')

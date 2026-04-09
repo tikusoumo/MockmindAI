@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
@@ -62,6 +62,12 @@ export class AuthService {
 
     // Find or create user
     let user = await this.prisma.user.findUnique({ where: { email } });
+
+    // Ensure we don't overwrite verified accounts during signup
+    if (user && user.isVerified) {
+      throw new ConflictException('An account with this email already exists. Please sign in instead.');
+    }
+
     if (!user) {
       const password_hash = pass ? await bcrypt.hash(pass, 10) : undefined;
       const finalName = name || email.split('@')[0];
@@ -74,16 +80,58 @@ export class AuthService {
           avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${finalName}`,
         },
       });
-    } else if (!user.isVerified) {
+    } else {
+      // User exists but is not yet verified — update and verify
       const password_hash = pass ? await bcrypt.hash(pass, 10) : user.password_hash;
       user = await this.prisma.user.update({
         where: { id: user.id },
-        data: { isVerified: true, password_hash },
+        data: { isVerified: true, password_hash, name: name || user.name },
       });
     }
 
     const token = this.generateToken(user);
     return { user: this.sanitizeUser(user), token };
+  }
+
+  async forgotPassword(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      // Don't leak user existence for security, but we can't send OTP if user doesn't exist
+      throw new BadRequestException('If an account exists for this email, an OTP has been sent.');
+    }
+
+    if (user.googleId && !user.password_hash) {
+      throw new BadRequestException('This account was created with Google. Please login with Google.');
+    }
+
+    return this.sendOtp(email);
+  }
+
+  async resetPassword(email: string, code: string, newPass: string) {
+    const otp = await this.prisma.oTP.findFirst({ where: { email, code } });
+    if (!otp) {
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
+
+    if (new Date() > otp.expiresAt) {
+      await this.prisma.oTP.delete({ where: { id: otp.id } }).catch(() => {});
+      throw new UnauthorizedException('OTP has expired');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    const password_hash = await bcrypt.hash(newPass, 10);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { password_hash, isVerified: true },
+    });
+
+    await this.prisma.oTP.delete({ where: { id: otp.id } });
+
+    return { message: 'Password reset successful' };
   }
 
   async login(email: string, pass: string) {
@@ -153,4 +201,13 @@ export class AuthService {
     await this.prisma.user.update({ where: { id: userId }, data: { password_hash } });
     return { message: 'Password updated successfully.' };
   }
-}
+
+  async checkEmailExists(email: string): Promise<boolean> {
+    if (!email) return false;
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true, isVerified: true },
+    });
+    return !!(user && user.isVerified);
+  }
+}

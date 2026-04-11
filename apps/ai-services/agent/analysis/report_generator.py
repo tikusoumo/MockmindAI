@@ -44,6 +44,9 @@ class InterviewReport:
     
     # Transcript
     transcript: list[dict[str, Any]]
+
+    # Coding timeline for technical/machine rounds
+    code_history: list[dict[str, Any]]
     
     # Speech analysis
     filler_words_analysis: list[dict[str, int]]
@@ -71,6 +74,7 @@ class InterviewReport:
             "timelineData": self.timeline_data,
             "questions": self.questions,
             "transcript": self.transcript,
+            "codeHistory": self.code_history,
             "fillerWordsAnalysis": self.filler_words_analysis,
             "pacingAnalysis": self.pacing_analysis,
             "behavioralAnalysis": self.behavioral_analysis,
@@ -161,6 +165,7 @@ class ReportGenerator:
             timeline_data=self._generate_timeline_data(transcript_dicts),
             questions=self._format_questions(semantic_result),
             transcript=self._format_transcript(transcript_dicts),
+            code_history=self._format_code_history(session_data),
             filler_words_analysis=[
                 {"word": fw.word, "count": fw.count}
                 for fw in speech_result.filler_words
@@ -252,6 +257,38 @@ class ReportGenerator:
             }
             for entry in transcript
         ]
+
+    def _format_code_history(self, session_data: SessionData) -> list[dict[str, Any]]:
+        """Format coding history timeline for report payload."""
+        events: list[dict[str, Any]] = []
+        for index, entry in enumerate(session_data.code_history, start=1):
+            minutes = int(max(0.0, entry.timestamp) // 60)
+            seconds = int(max(0.0, entry.timestamp) % 60)
+            details = entry.details if isinstance(entry.details, dict) else {}
+            snapshot_code_raw = (
+                details.get("codeSnapshot")
+                or details.get("code")
+                or details.get("snapshotCode")
+            )
+            snapshot_code = (
+                snapshot_code_raw
+                if isinstance(snapshot_code_raw, str)
+                else ""
+            )
+            event_id = entry.event_id or f"SNAP-{index:04d}"
+            events.append(
+                {
+                    "id": event_id,
+                    "actor": entry.actor,
+                    "eventType": entry.event_type,
+                    "summary": entry.summary,
+                    "timestamp": f"{minutes:02d}:{seconds:02d}",
+                    "language": entry.language,
+                    "code": snapshot_code,
+                    "details": details,
+                }
+            )
+        return events
 
     def _filler_level(self, percentage: float) -> str:
         """Convert filler word percentage to level."""

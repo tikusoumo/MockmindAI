@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PrismaService } from '../prisma.service';
@@ -23,7 +33,11 @@ export class ScheduleController {
   }
 
   @Patch(':id')
-  async updateSession(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+  async updateSession(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
     return this.scheduleService.updateSession(req.user.userId, id, body);
   }
 
@@ -45,7 +59,11 @@ export class ScheduleController {
   }
 
   @Patch('routines/:id')
-  async updateRoutine(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+  async updateRoutine(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
     return this.scheduleService.updateRoutine(req.user.userId, id, body);
   }
 
@@ -53,7 +71,9 @@ export class ScheduleController {
 
   @Get('google/status')
   async getGoogleStatus(@Req() req: any) {
-    const user = await this.prisma.user.findUnique({ where: { id: req.user.userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.userId },
+    });
     return { connected: !!user?.googleCalendarToken };
   }
 

@@ -10,7 +10,12 @@ import { PrismaService } from '../prisma.service';
 @Module({
   imports: [NestScheduleModule.forRoot(), NotificationsModule],
   controllers: [ScheduleController],
-  providers: [ScheduleService, GoogleCalendarService, ScheduleCronService, PrismaService],
+  providers: [
+    ScheduleService,
+    GoogleCalendarService,
+    ScheduleCronService,
+    PrismaService,
+  ],
   exports: [ScheduleService],
 })
 export class ScheduleModule {}

@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import Editor, { OnMount, useMonaco } from "@monaco-editor/react";
+import Editor, { OnMount } from "@monaco-editor/react";
 import { useTheme } from "next-themes";
 import {
-  Loader2, Code2, Play, Square, ChevronDown, ChevronUp,
+  Loader2, Code2, Play, ChevronDown, ChevronUp,
   RotateCcw, Copy, Check, Settings2, Terminal, AlertCircle,
-  CheckCircle2, Clock, MemoryStick, Maximize2, WrapText,
+  CheckCircle2, Clock, MemoryStick, WrapText,
   MinusSquare, PlusSquare,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -348,6 +348,29 @@ interface RunResult {
   statusDesc: string;
 }
 
+export interface CodeExecutionEvent {
+  status: RunStatus;
+  statusDesc: string;
+  language: string;
+  time: string | null;
+  memory: number | null;
+  stdin: string;
+  stdoutPreview: string;
+  stderrPreview: string;
+  compileOutputPreview: string;
+  codeSize: number;
+  timestamp: number;
+  source?: "candidate" | "ai";
+  testCaseLabel?: string;
+}
+
+export interface RemoteExecutionRequest {
+  id: string;
+  source?: "candidate" | "ai";
+  stdin?: string;
+  testCases?: Array<string | { label?: string; stdin?: string }>;
+}
+
 async function executeCode(
   sourceCode: string,
   languageId: number,
@@ -409,6 +432,12 @@ interface CodeEditorProps {
   className?: string;
   /** Called whenever code or language changes — lets AI read current state */
   onCodeSnapshot?: (code: string, language: string) => void;
+  /** Called when the user executes code from the editor run button */
+  onExecution?: (event: CodeExecutionEvent) => void;
+  /** Remote request to execute code and optional test cases (used by AI assistant actions) */
+  executionRequest?: RemoteExecutionRequest | null;
+  /** Signals that a remote execution request has completed */
+  onExecutionRequestComplete?: (requestId: string) => void;
 }
 
 export function CodeEditor({
@@ -419,14 +448,21 @@ export function CodeEditor({
   onLanguageChange,
   className,
   onCodeSnapshot,
+  onExecution,
+  executionRequest,
+  onExecutionRequestComplete,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme();
-  const monaco = useMonaco();
 
   const initialLanguageId = controlledLanguage || defaultLanguage;
   const langDef = LANGUAGES.find((l) => l.id === initialLanguageId) ?? LANGUAGES[0];
-  const [language, setLanguage] = useState(langDef);
-  const [code, setCode] = useState(value ?? langDef.starter);
+  const [languageState, setLanguageState] = useState(langDef);
+  const [internalCode, setInternalCode] = useState(value ?? langDef.starter);
+  const language =
+    (controlledLanguage
+      ? LANGUAGES.find((l) => l.id === controlledLanguage)
+      : languageState) ?? languageState;
+  const code = typeof value === "string" ? value : internalCode;
   const [stdin, setStdin] = useState("");
   const [showStdin, setShowStdin] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
@@ -436,23 +472,36 @@ export function CodeEditor({
   const [fontSize, setFontSize] = useState(14);
   const [wordWrap, setWordWrap] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const editorRef = useRef<any>(null);
+  const codeByLanguageRef = useRef<Record<string, string>>({
+    [langDef.id]: value ?? langDef.starter,
+  });
+  const handledExecutionRequestIdsRef = useRef<Set<string>>(new Set());
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
-  // When language changes swap to starter
+  // When language changes preserve per-language drafts and fall back to starter templates.
   const handleLanguageChange = (langId: string) => {
+    codeByLanguageRef.current[language.id] = code;
+
     const def = LANGUAGES.find((l) => l.id === langId) ?? LANGUAGES[0];
-    setLanguage(def);
-    setCode(def.starter);
+    const nextCode = codeByLanguageRef.current[def.id] ?? def.starter;
+
+    if (!controlledLanguage) {
+      setLanguageState(def);
+    }
+    setInternalCode(nextCode);
     setResult(null);
     setRunStatus("idle");
-    onChange?.(def.starter);
+
+    codeByLanguageRef.current[def.id] = nextCode;
+    onChange?.(nextCode);
     onLanguageChange?.(def.id);
-    onCodeSnapshot?.(def.starter, def.id);
+    onCodeSnapshot?.(nextCode, def.id);
   };
 
   const handleCodeChange = (val: string | undefined) => {
     const v = val ?? "";
-    setCode(v);
+    setInternalCode(v);
+    codeByLanguageRef.current[language.id] = v;
     onChange?.(v);
   };
 
@@ -461,42 +510,56 @@ export function CodeEditor({
     onCodeSnapshot?.(code, language.id);
   }, [code, language.id]); // eslint-disable-line
 
-  // Keep editor code in sync when parent controls value.
   useEffect(() => {
-    if (typeof value !== "string") {
-      return;
-    }
-    if (value !== code) {
-      setCode(value);
-    }
-  }, [value, code]);
+    codeByLanguageRef.current[language.id] = code;
+  }, [code, language.id]);
 
-  // Keep language in sync when parent controls it.
-  useEffect(() => {
-    if (!controlledLanguage || controlledLanguage === language.id) {
-      return;
-    }
+  const handleRun = useCallback(async (
+    options?: {
+      stdinOverride?: string;
+      source?: "candidate" | "ai";
+      testCaseLabel?: string;
+    },
+  ) => {
+    const truncateOutput = (value: string, maxChars: number = 240): string => {
+      if (!value) {
+        return "";
+      }
+      return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value;
+    };
 
-    const next = LANGUAGES.find((l) => l.id === controlledLanguage) ?? language;
-    if (next.id !== language.id) {
-      setLanguage(next);
-      setResult(null);
-      setRunStatus("idle");
-    }
-  }, [controlledLanguage, language]);
+    const effectiveStdin = options?.stdinOverride ?? stdin;
+    const source = options?.source ?? "candidate";
+    const testCaseLabel = options?.testCaseLabel;
 
-  const handleRun = useCallback(async () => {
     setRunStatus("running");
     setOutputOpen(true);
     setResult(null);
     try {
-      const res = await executeCode(code, language.judge0Id, stdin);
+      const res = await executeCode(code, language.judge0Id, effectiveStdin);
       setResult(res);
       setRunStatus(res.status);
-    } catch (e: any) {
+      onExecution?.({
+        status: res.status,
+        statusDesc: res.statusDesc,
+        language: language.id,
+        time: res.time,
+        memory: res.memory,
+        stdin: effectiveStdin,
+        stdoutPreview: truncateOutput(res.stdout),
+        stderrPreview: truncateOutput(res.stderr),
+        compileOutputPreview: truncateOutput(res.compileOutput),
+        codeSize: code.length,
+        timestamp: Date.now(),
+        source,
+        testCaseLabel,
+      });
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Execution failed";
       setResult({
         stdout: "",
-        stderr: e.message || "Execution failed",
+        stderr: errorMessage,
         compileOutput: "",
         status: "error",
         time: null,
@@ -504,8 +567,73 @@ export function CodeEditor({
         statusDesc: "Error",
       });
       setRunStatus("error");
+      onExecution?.({
+        status: "error",
+        statusDesc: "Error",
+        language: language.id,
+        time: null,
+        memory: null,
+        stdin: effectiveStdin,
+        stdoutPreview: "",
+        stderrPreview: truncateOutput(errorMessage),
+        compileOutputPreview: "",
+        codeSize: code.length,
+        timestamp: Date.now(),
+        source,
+        testCaseLabel,
+      });
     }
-  }, [code, language, stdin]);
+  }, [code, language, onExecution, stdin]);
+
+  useEffect(() => {
+    if (!executionRequest || !executionRequest.id) {
+      return;
+    }
+
+    if (handledExecutionRequestIdsRef.current.has(executionRequest.id)) {
+      return;
+    }
+
+    handledExecutionRequestIdsRef.current.add(executionRequest.id);
+
+    const runRemoteExecution = async () => {
+      const source = executionRequest.source === "candidate" ? "candidate" : "ai";
+      const rawCases = Array.isArray(executionRequest.testCases) ? executionRequest.testCases : [];
+      const normalizedCases = rawCases
+        .slice(0, 8)
+        .map((item, index) => {
+          if (typeof item === "string") {
+            return {
+              label: `Case ${index + 1}`,
+              stdin: item,
+            };
+          }
+          return {
+            label: item?.label || `Case ${index + 1}`,
+            stdin: item?.stdin || "",
+          };
+        });
+
+      if (normalizedCases.length > 0) {
+        for (const testCase of normalizedCases) {
+          await handleRun({
+            stdinOverride: testCase.stdin,
+            source,
+            testCaseLabel: testCase.label,
+          });
+        }
+      } else {
+        await handleRun({
+          stdinOverride: executionRequest.stdin,
+          source,
+        });
+      }
+
+      onExecutionRequestComplete?.(executionRequest.id);
+    };
+
+    void runRemoteExecution();
+  }, [executionRequest, handleRun, onExecutionRequestComplete]);
 
   // Ctrl+Enter / Cmd+Enter to run
   useEffect(() => {
@@ -520,7 +648,8 @@ export function CodeEditor({
   }, [handleRun]);
 
   const handleReset = () => {
-    setCode(language.starter);
+    setInternalCode(language.starter);
+    codeByLanguageRef.current[language.id] = language.starter;
     setResult(null);
     setRunStatus("idle");
     onChange?.(language.starter);

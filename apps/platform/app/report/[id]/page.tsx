@@ -18,7 +18,9 @@ import {
   Mic,
   Activity,
   User,
-  Bot
+  Bot,
+  ClipboardCheck,
+  Code2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,10 +28,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { ReportData } from "@/data/mockData";
-import { backendGet, getBackendUrl } from "@/lib/backend";
+import { backendGet, backendPost, getBackendUrl } from "@/lib/backend";
 import { fallbackReport } from "@/lib/fallback-data";
+import { toast } from "sonner";
 import {
   Radar,
   RadarChart,
@@ -58,6 +62,32 @@ type TranscriptDisplayEntry = {
   text: string;
   timestamp: string;
   timestampSeconds: number | null;
+};
+
+type CoachResponse = {
+  answer: string;
+  highlights: string[];
+  suggestedQuestions: string[];
+  generatedAt: string;
+};
+
+type CodeHistoryDisplayEntry = {
+  id: string;
+  actor: string;
+  eventType: string;
+  summary: string;
+  timestampLabel: string;
+  timestampOrder: number;
+  language?: string;
+  code?: string;
+  details?: Record<string, unknown>;
+};
+
+type SessionAudioTrack = {
+  id: string;
+  label: string;
+  speaker: string;
+  audioUrl?: string;
 };
 
 const QUESTION_STARTERS = [
@@ -268,7 +298,7 @@ function resolveMediaUrl(url: string | undefined): string | undefined {
 const REPORT_POLL_INTERVAL_MS = 5000;
 const REPORT_POLL_MAX_DURATION_MS = 5 * 60 * 1000;
 const AUDIO_RECOVERY_POLL_INTERVAL_MS = 4000;
-const AUDIO_RECOVERY_POLL_MAX_DURATION_MS = 2 * 60 * 1000;
+const AUDIO_RECOVERY_POLL_MAX_DURATION_MS = 20 * 1000;
 
 function withNoCache(path: string): string {
   const separator = path.includes("?") ? "&" : "?";
@@ -319,6 +349,14 @@ export default function ReportDetailPage() {
   const [isResolvingAudio, setIsResolvingAudio] = useState(false);
   const [audioRecoveryExhausted, setAudioRecoveryExhausted] = useState(false);
   const [audioLoadErrorByQuestion, setAudioLoadErrorByQuestion] = useState<Record<number, boolean>>({});
+  const [isCoachPanelOpen, setIsCoachPanelOpen] = useState(false);
+  const [coachPrompt, setCoachPrompt] = useState("");
+  const [coachAnswer, setCoachAnswer] = useState<string>("");
+  const [coachHighlights, setCoachHighlights] = useState<string[]>([]);
+  const [coachSuggestedQuestions, setCoachSuggestedQuestions] = useState<string[]>([]);
+  const [isAskingCoach, setIsAskingCoach] = useState(false);
+  const [isSharingReport, setIsSharingReport] = useState(false);
+  const [selectedSnapshotIndex, setSelectedSnapshotIndex] = useState(0);
   const audioElementRefs = useRef<Record<number, HTMLAudioElement | null>>({});
 
   const endpoint = id === 'latest' ? '/api/reports/latest' : `/api/reports/${id}`;
@@ -414,11 +452,18 @@ export default function ReportDetailPage() {
     setActiveAudioQuestionId(null);
     setAudioLoadErrorByQuestion({});
     setAudioRecoveryExhausted(false);
+    setCoachPrompt("");
+    setCoachAnswer("");
+    setCoachHighlights([]);
+    setCoachSuggestedQuestions([]);
+    setIsCoachPanelOpen(false);
+    setSelectedSnapshotIndex(0);
   }, [report.id]);
 
   useEffect(() => {
+    const currentAudioRefs = audioElementRefs.current;
     return () => {
-      Object.values(audioElementRefs.current).forEach((audio) => {
+      Object.values(currentAudioRefs).forEach((audio) => {
         if (audio && !audio.paused) {
           audio.pause();
         }
@@ -599,6 +644,190 @@ export default function ReportDetailPage() {
   const radarData = Array.isArray(report.radarData) ? report.radarData : [];
   const timelineData = Array.isArray(report.timelineData) ? report.timelineData : [];
 
+  const codeHistory = useMemo<CodeHistoryDisplayEntry[]>(() => {
+    const rawEntries = Array.isArray(report.codeHistory) ? report.codeHistory : [];
+    const normalizedEntries: CodeHistoryDisplayEntry[] = [];
+
+    rawEntries.forEach((entry, index) => {
+      const snakeCaseEventType = (entry as unknown as { event_type?: string }).event_type;
+      const summary = String(entry.summary || "").trim() || "Code snapshot updated.";
+
+      const rawTimestamp = entry.timestamp;
+      const timestampSeconds = parseTimestampToSeconds(
+        rawTimestamp as string | number | undefined,
+      );
+
+      const detailsValue = entry.details;
+      const details =
+        detailsValue && typeof detailsValue === "object" && !Array.isArray(detailsValue)
+          ? (detailsValue as Record<string, unknown>)
+          : undefined;
+      const detailsSnapshotId =
+        typeof details?.snapshotId === "string"
+          ? details.snapshotId
+          : typeof details?.snapshot_id === "string"
+            ? details.snapshot_id
+            : "";
+      const snapshotId =
+        typeof entry.id === "string" && entry.id.trim()
+          ? entry.id.trim()
+          : detailsSnapshotId || `SNAP-${String(index + 1).padStart(4, "0")}`;
+      const snapshotCode =
+        typeof entry.code === "string"
+          ? entry.code
+          : typeof details?.codeSnapshot === "string"
+            ? details.codeSnapshot
+            : typeof details?.code === "string"
+              ? details.code
+              : undefined;
+
+      normalizedEntries.push({
+        id: snapshotId,
+        actor: String(entry.actor || "system").toLowerCase(),
+        eventType: String(entry.eventType || snakeCaseEventType || "note").toLowerCase(),
+        summary,
+        timestampLabel:
+          timestampSeconds === null
+            ? String(rawTimestamp || "--:--")
+            : formatSeconds(timestampSeconds),
+        timestampOrder: timestampSeconds ?? index,
+        language: typeof entry.language === "string" ? entry.language : undefined,
+        code: snapshotCode,
+        details,
+      });
+    });
+
+    return normalizedEntries.sort((a, b) => a.timestampOrder - b.timestampOrder);
+  }, [report]);
+
+  useEffect(() => {
+    if (codeHistory.length === 0) {
+      setSelectedSnapshotIndex(0);
+      return;
+    }
+    setSelectedSnapshotIndex(codeHistory.length - 1);
+  }, [codeHistory.length, report.id]);
+
+  const activeSnapshot = codeHistory[Math.min(selectedSnapshotIndex, Math.max(codeHistory.length - 1, 0))];
+  const activeSnapshotCode =
+    typeof activeSnapshot?.code === "string" && activeSnapshot.code.length > 0
+      ? activeSnapshot.code
+      : "";
+  const activeSnapshotLines =
+    activeSnapshotCode.length > 0 ? activeSnapshotCode.split("\n") : [""];
+  const normalizedActiveActor = (activeSnapshot?.actor || "system").toLowerCase();
+  const normalizedActiveType = (activeSnapshot?.eventType || "note").toLowerCase();
+  const activeActorBadgeVariant =
+    normalizedActiveActor === "ai"
+      ? "secondary"
+      : normalizedActiveActor === "user" || normalizedActiveActor === "candidate"
+        ? "default"
+        : "outline";
+  const activeSnapshotStatus =
+    typeof activeSnapshot?.details?.status === "string"
+      ? activeSnapshot.details.status
+      : "";
+
+  const sessionAudioTracks = useMemo<SessionAudioTrack[]>(() => {
+    const rawTracks = Array.isArray(report.audioTracks) ? report.audioTracks : [];
+
+    const normalizedTracks = rawTracks
+      .map((track, index) => {
+        const id = String(track.id || `track-${index + 1}`);
+        const label = String(track.label || track.speaker || `Track ${index + 1}`);
+        const speaker = String(track.speaker || "Speaker");
+        const explicitUrl =
+          typeof track.audioUrl === "string"
+            ? resolveMediaUrl(track.audioUrl)
+            : undefined;
+
+        return {
+          id,
+          label,
+          speaker,
+          audioUrl: explicitUrl || sharedRecordingAudioUrl,
+        };
+      })
+      .filter((track) => Boolean(track.label));
+
+    if (normalizedTracks.length > 0) {
+      return normalizedTracks;
+    }
+
+    if (!sharedRecordingAudioUrl) {
+      return [];
+    }
+
+    return [
+      {
+        id: "candidate-audio",
+        label: "Candidate Audio",
+        speaker: "You",
+        audioUrl: sharedRecordingAudioUrl,
+      },
+      {
+        id: "ai-audio",
+        label: "AI/Interviewer Audio",
+        speaker: "Interviewer",
+        audioUrl: sharedRecordingAudioUrl,
+      },
+    ];
+  }, [report.audioTracks, sharedRecordingAudioUrl]);
+
+  const buildLocalCoachFallback = (question: string): CoachResponse => {
+    const lowerQuestion = question.toLowerCase();
+    const strengths = Array.isArray(swot.strengths) ? swot.strengths : [];
+    const weaknesses = Array.isArray(swot.weaknesses) ? swot.weaknesses : [];
+
+    const codeEvents = codeHistory.length;
+    const testEvents = codeHistory.filter((entry) => entry.eventType.includes("test")).length;
+    const audioCount = sessionAudioTracks.filter((track) => Boolean(track.audioUrl)).length;
+
+    const highlights: string[] = [
+      `Overall score: ${report.overallScore}/100`,
+      `Hard skills: ${report.hardSkillsScore}/100`,
+      `Soft skills: ${report.softSkillsScore}/100`,
+      `Code events captured: ${codeEvents}`,
+    ];
+
+    if (strengths[0]) {
+      highlights.push(`Strength: ${strengths[0]}`);
+    }
+    if (weaknesses[0]) {
+      highlights.push(`Improve: ${weaknesses[0]}`);
+    }
+
+    let answer = `Based on this report, focus first on improving clarity and structure while maintaining your technical momentum.`;
+
+    if (lowerQuestion.includes("test")) {
+      answer =
+        testEvents > 0
+          ? `I can see ${testEvents} testing-related events. Prioritize writing explicit edge-case tests first, then add one positive-path and one failure-path assertion per function.`
+          : `No explicit test-run events were captured. In the next round, narrate your test plan (happy path, edge case, failure case) and run them incrementally.`;
+    } else if (lowerQuestion.includes("audio") || lowerQuestion.includes("record")) {
+      answer =
+        audioCount > 0
+          ? `Audio tracks are available (${audioCount}). Use them to review pacing and filler words after each mock interview.`
+          : `This report currently has no accessible audio track from the API. The rest of your report data is still usable for focused practice.`;
+    } else if (lowerQuestion.includes("code") || lowerQuestion.includes("history")) {
+      answer =
+        codeEvents > 0
+          ? `Your coding timeline shows ${codeEvents} events. Tighten your workflow by stating intent before edits, then validating with quick tests after each meaningful change.`
+          : `Coding history wasn't returned by the backend, so I inferred events from transcript context. Keep verbalizing code decisions to preserve evaluable history.`;
+    }
+
+    return {
+      answer,
+      highlights: highlights.slice(0, 6),
+      suggestedQuestions: [
+        "What is the single biggest weakness to fix next week?",
+        "Give me a 3-step coding-round checklist.",
+        "How should I present test cases in interviews?",
+      ],
+      generatedAt: new Date().toISOString(),
+    };
+  };
+
   const handleExportPdf = async () => {
     if (typeof window === "undefined" || isExportingPdf) {
       return;
@@ -638,6 +867,98 @@ export default function ReportDetailPage() {
       console.error("Failed to export custom report PDF", error);
     } finally {
       setIsExportingPdf(false);
+    }
+  };
+
+  const handleAskCoach = async () => {
+    const question = coachPrompt.trim();
+    if (!question || isAskingCoach) {
+      if (!question) {
+        toast.error("Enter a question to ask your AI coach.");
+      }
+      return;
+    }
+
+    const reportIdForCoach = id || report.id || "latest";
+    setIsAskingCoach(true);
+
+    try {
+      const response = await backendPost<CoachResponse>(
+        `/api/reports/${reportIdForCoach}/ask`,
+        { question },
+      );
+
+      setCoachAnswer(response.answer || "");
+      setCoachHighlights(Array.isArray(response.highlights) ? response.highlights : []);
+      setCoachSuggestedQuestions(
+        Array.isArray(response.suggestedQuestions) ? response.suggestedQuestions : [],
+      );
+    } catch (error) {
+      console.error("Failed to ask AI coach", error);
+      const maybeError = error as { status?: number };
+      if (maybeError?.status === 404 || maybeError?.status === 405) {
+        const fallback = buildLocalCoachFallback(question);
+        setCoachAnswer(fallback.answer);
+        setCoachHighlights(fallback.highlights);
+        setCoachSuggestedQuestions(fallback.suggestedQuestions);
+        toast.message("Coach endpoint unavailable. Showing local AI guidance.");
+      } else {
+        toast.error("Unable to fetch coach response right now.");
+      }
+    } finally {
+      setIsAskingCoach(false);
+    }
+  };
+
+  const handleShareReport = async () => {
+    if (typeof window === "undefined" || isSharingReport) {
+      return;
+    }
+
+    const shareUrl = window.location.href;
+    const sharePayload = {
+      title: `Interview Report ${report.id}`,
+      text: "Sharing interview analysis report",
+      url: shareUrl,
+    };
+
+    setIsSharingReport(true);
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+        await navigator.share(sharePayload);
+        toast.success("Report shared successfully.");
+        return;
+      }
+
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        toast.success("Report link copied to clipboard.");
+        return;
+      }
+
+      const textArea = document.createElement("textarea");
+      textArea.value = shareUrl;
+      textArea.setAttribute("readonly", "");
+      textArea.style.position = "absolute";
+      textArea.style.left = "-9999px";
+      document.body.appendChild(textArea);
+      textArea.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textArea);
+      if (copied) {
+        toast.success("Report link copied to clipboard.");
+        return;
+      }
+
+      window.prompt("Copy report link", shareUrl);
+    } catch (error) {
+      const maybeError = error as { name?: string };
+      if (maybeError?.name !== "AbortError") {
+        console.error("Failed to share report", error);
+        toast.error("Unable to share report right now.");
+      }
+    } finally {
+      setIsSharingReport(false);
     }
   };
 
@@ -683,17 +1004,91 @@ export default function ReportDetailPage() {
           </p>
         </div>
         <div className="flex gap-3 print:hidden">
-          <Button variant="outline" className="hidden md:flex">
-            <MessageSquare className="mr-2 h-4 w-4" /> Ask Coach
+          <Button
+            variant="outline"
+            className="flex"
+            onClick={() => setIsCoachPanelOpen((current) => !current)}
+          >
+            <MessageSquare className="mr-2 h-4 w-4" />
+            {isCoachPanelOpen ? "Hide Coach" : "Ask Coach"}
           </Button>
-          <Button variant="outline">
-            <Share2 className="mr-2 h-4 w-4" /> Share
+          <Button variant="outline" onClick={() => void handleShareReport()} disabled={isSharingReport}>
+            <Share2 className="mr-2 h-4 w-4" /> {isSharingReport ? "Sharing..." : "Share"}
           </Button>
           <Button onClick={handleExportPdf} disabled={isExportingPdf}>
             <Download className="mr-2 h-4 w-4" /> {isExportingPdf ? "Preparing..." : "Export PDF"}
           </Button>
         </div>
       </div>
+
+      {isCoachPanelOpen ? (
+        <Card className="print:hidden">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <MessageSquare className="h-5 w-5" /> Ask AI Coach
+            </CardTitle>
+            <CardDescription>
+              Ask a report-specific question about your technical performance, test runs, or coding history.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Textarea
+                value={coachPrompt}
+                onChange={(event) => setCoachPrompt(event.target.value)}
+                placeholder="Example: What should I improve first in my machine-coding round?"
+                className="min-h-24"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Keep it specific for better coaching.
+                </p>
+                <Button onClick={() => void handleAskCoach()} disabled={isAskingCoach}>
+                  {isAskingCoach ? "Analyzing..." : "Ask AI"}
+                </Button>
+              </div>
+            </div>
+
+            {coachAnswer ? (
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                <p className="text-sm leading-6">{coachAnswer}</p>
+
+                {coachHighlights.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {coachHighlights.map((highlight, index) => (
+                      <Badge key={`${highlight}-${index}`} variant="secondary">
+                        {highlight}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : null}
+
+                {coachSuggestedQuestions.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Suggested follow-up questions
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {coachSuggestedQuestions.map((suggestion) => (
+                        <Button
+                          key={suggestion}
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto whitespace-normal px-3 py-1 text-left"
+                          onClick={() => setCoachPrompt(suggestion)}
+                        >
+                          {suggestion}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {isAwaitingFinalReport ? (
         <Card className="border-amber-500/30 bg-amber-500/5">
@@ -802,6 +1197,7 @@ export default function ReportDetailPage() {
       <Tabs defaultValue="questions" className="space-y-4">
         <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="questions">Question Analysis</TabsTrigger>
+          <TabsTrigger value="history">Code History</TabsTrigger>
           <TabsTrigger value="transcript">Transcript</TabsTrigger>
           <TabsTrigger value="speech">Speech Analysis</TabsTrigger>
           <TabsTrigger value="swot">SWOT Analysis</TabsTrigger>
@@ -961,6 +1357,127 @@ export default function ReportDetailPage() {
           )}
         </TabsContent>
 
+        <TabsContent value="history" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Code2 className="h-5 w-5" /> Code Snapshot History
+              </CardTitle>
+              <CardDescription>
+                Single snapshot view with slider-based navigation across user/AI code decisions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {codeHistory.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  No coding history was captured for this report.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="font-mono text-[11px]">
+                      {activeSnapshot?.id}
+                    </Badge>
+                    <Badge variant={activeActorBadgeVariant} className="h-5">
+                      {normalizedActiveActor === "ai"
+                        ? "AI"
+                        : normalizedActiveActor === "user" || normalizedActiveActor === "candidate"
+                          ? "User"
+                          : "System"}
+                    </Badge>
+                    <Badge variant="outline" className="h-5 capitalize">
+                      {normalizedActiveType.replace(/_/g, " ")}
+                    </Badge>
+                    <span className="font-mono text-[11px] text-muted-foreground">
+                      {activeSnapshot?.timestampLabel}
+                    </span>
+                    {activeSnapshot?.language ? (
+                      <span className="font-mono text-[11px] uppercase text-muted-foreground">
+                        {activeSnapshot.language}
+                      </span>
+                    ) : null}
+                    {activeSnapshotStatus ? (
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        Status: {activeSnapshotStatus}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-md border bg-muted/20 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        Snapshot {Math.min(selectedSnapshotIndex + 1, codeHistory.length)} / {codeHistory.length}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSelectedSnapshotIndex((prev) => Math.max(0, prev - 1))}
+                          disabled={selectedSnapshotIndex <= 0}
+                        >
+                          Prev
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setSelectedSnapshotIndex((prev) =>
+                              Math.min(codeHistory.length - 1, prev + 1),
+                            )
+                          }
+                          disabled={selectedSnapshotIndex >= codeHistory.length - 1}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(codeHistory.length - 1, 0)}
+                      step={1}
+                      value={Math.min(selectedSnapshotIndex, Math.max(codeHistory.length - 1, 0))}
+                      onChange={(event) =>
+                        setSelectedSnapshotIndex(Number(event.currentTarget.value) || 0)
+                      }
+                      className="w-full"
+                    />
+
+                    <div className="mt-2 flex items-center justify-between font-mono text-[10px] text-muted-foreground">
+                      <span>{codeHistory[0]?.id}</span>
+                      <span>{codeHistory[codeHistory.length - 1]?.id}</span>
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded-md border border-zinc-700 bg-[#1e1e1e] text-zinc-100">
+                    <div className="border-b border-zinc-700 bg-[#2d2d2d] px-3 py-2 text-[11px] text-zinc-300">
+                      {activeSnapshot?.summary}
+                    </div>
+                    <div className="grid grid-cols-[56px_1fr]">
+                      <div className="max-h-115 overflow-auto border-r border-zinc-700 bg-[#191919] px-2 py-2">
+                        {activeSnapshotLines.map((_, idx) => (
+                          <div
+                            key={`${activeSnapshot?.id || "snapshot"}-line-${idx + 1}`}
+                            className="text-right font-mono text-[11px] leading-5 text-zinc-500"
+                          >
+                            {idx + 1}
+                          </div>
+                        ))}
+                      </div>
+                      <pre className="m-0 max-h-115 overflow-auto px-3 py-2 font-mono text-xs leading-5 text-zinc-200">
+                        {activeSnapshotCode || "// No code snapshot captured for this step."}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="transcript" className="space-y-4">
           <Card>
             <CardHeader>
@@ -968,6 +1485,36 @@ export default function ReportDetailPage() {
               <CardDescription>Review the entire conversation history</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <ClipboardCheck className="h-4 w-4" />
+                  Candidate & AI Audio
+                </div>
+
+                {sessionAudioTracks.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    User and AI audio tracks are not available yet for this report.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {sessionAudioTracks.map((track) => (
+                      <div key={track.id} className="space-y-1">
+                        <div className="text-xs text-muted-foreground">
+                          {track.label} ({track.speaker})
+                        </div>
+                        {track.audioUrl ? (
+                          <audio controls preload="none" src={track.audioUrl} className="w-full" />
+                        ) : (
+                          <div className="text-xs text-muted-foreground">
+                            Recording is not available for this track.
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {normalizedTranscript.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
                   Transcript was not captured for this session.

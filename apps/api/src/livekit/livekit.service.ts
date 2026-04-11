@@ -23,7 +23,9 @@ export class LivekitService {
 
     if (livekitUrl && apiKey && apiSecret) {
       // Convert ws:// to http:// for API calls
-      const httpUrl = livekitUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+      const httpUrl = livekitUrl
+        .replace('ws://', 'http://')
+        .replace('wss://', 'https://');
       this.roomService = new RoomServiceClient(httpUrl, apiKey, apiSecret);
       this.egressService = new EgressClient(httpUrl, apiKey, apiSecret);
     }
@@ -78,7 +80,7 @@ export class LivekitService {
     }
 
     const uniqueIdentity = `${participantName}-${Date.now().toString(36).substring(4)}`;
-    
+
     const token = new AccessToken(apiKey, apiSecret, {
       identity: uniqueIdentity,
       name: participantName, // this preserves the display name while making identity unique
@@ -133,7 +135,12 @@ export class LivekitService {
   async startRoomAudioRecording(
     roomName: string,
     sessionId: string,
-  ): Promise<{ egressId: string; status: number; fileName: string; audioUrl: string }> {
+  ): Promise<{
+    egressId: string;
+    status: number;
+    fileName: string;
+    audioUrl: string;
+  }> {
     if (!this.egressService) {
       throw new Error('LiveKit egress is not configured');
     }
@@ -172,9 +179,12 @@ export class LivekitService {
     };
   }
 
-  async stopRoomAudioRecording(
-    egressId: string,
-  ): Promise<{ egressId: string; status: number; error?: string; audioUrl?: string }> {
+  async stopRoomAudioRecording(egressId: string): Promise<{
+    egressId: string;
+    status: number;
+    error?: string;
+    audioUrl?: string;
+  }> {
     if (!this.egressService) {
       throw new Error('LiveKit egress is not configured');
     }
@@ -188,7 +198,9 @@ export class LivekitService {
         `Egress ${egressId} failed: ${settledInfo.error || 'Unknown LiveKit egress error'}`,
       );
     } else {
-      this.logger.log(`Stopped room audio recording egressId=${egressId}, status=${settledInfo.status}`);
+      this.logger.log(
+        `Stopped room audio recording egressId=${egressId}, status=${settledInfo.status}`,
+      );
     }
 
     return {
@@ -200,14 +212,19 @@ export class LivekitService {
   }
 
   private getEgressOutputDir(): string {
-    return this.configService.get<string>('LIVEKIT_EGRESS_OUTPUT_DIR') || '/out';
+    return (
+      this.configService.get<string>('LIVEKIT_EGRESS_OUTPUT_DIR') || '/out'
+    );
   }
 
   private sanitizeSessionId(sessionId: string): string {
     return String(sessionId || '').replace(/[^a-zA-Z0-9_-]/g, '');
   }
 
-  private async waitForEgressToSettle(egressId: string, initialInfo: any): Promise<any> {
+  private async waitForEgressToSettle(
+    egressId: string,
+    initialInfo: any,
+  ): Promise<any> {
     if (!this.egressService) {
       return initialInfo;
     }
@@ -242,7 +259,9 @@ export class LivekitService {
     const primaryLocation =
       info?.fileResults?.[0]?.filename ||
       info?.fileResults?.[0]?.location ||
-      (info?.result?.case === 'file' ? info?.result?.value?.filename || info?.result?.value?.location : '');
+      (info?.result?.case === 'file'
+        ? info?.result?.value?.filename || info?.result?.value?.location
+        : '');
 
     if (!primaryLocation) {
       return null;

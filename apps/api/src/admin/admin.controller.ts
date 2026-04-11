@@ -1,4 +1,12 @@
-import { Controller, Get, Patch, Delete, Param, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  UseGuards,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from './admin.guard';
@@ -13,7 +21,7 @@ export class AdminController {
     const userCount = await this.prisma.user.count();
     const postCount = await this.prisma.communityPost.count();
     const sessionCount = await this.prisma.scheduledSession.count();
-    
+
     return {
       users: userCount,
       posts: postCount,
@@ -31,15 +39,18 @@ export class AdminController {
         role: true,
         createdAt: true,
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
   }
 
   @Patch('users/:id/role')
-  async updateUserRole(@Param('id') id: string, @Body() body: { role: string }) {
+  async updateUserRole(
+    @Param('id') id: string,
+    @Body() body: { role: string },
+  ) {
     return this.prisma.user.update({
       where: { id: parseInt(id, 10) },
-      data: { role: body.role }
+      data: { role: body.role },
     });
   }
 
@@ -51,7 +62,9 @@ export class AdminController {
 
   @Delete('comments/:id')
   async deleteComment(@Param('id') id: string) {
-    await this.prisma.communityComment.delete({ where: { id: parseInt(id, 10) } });
+    await this.prisma.communityComment.delete({
+      where: { id: parseInt(id, 10) },
+    });
     return { success: true };
   }
 }

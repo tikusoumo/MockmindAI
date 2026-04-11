@@ -23,13 +23,19 @@ export class NotificationsService {
 
   async sendOtpEmail(email: string, code: string) {
     const htmlContent = this.getOtpEmailTemplate(code);
-    return this.sendEmail(email, 'Your MockMind AI Verification Code', htmlContent);
+    return this.sendEmail(
+      email,
+      'Your MockMind AI Verification Code',
+      htmlContent,
+    );
   }
 
   async sendEmail(to: string, subject: string, html: string) {
     try {
       if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
-        this.logger.warn(`SMTP credentials not configured. Mock sending email to ${to}`);
+        this.logger.warn(
+          `SMTP credentials not configured. Mock sending email to ${to}`,
+        );
         return;
       }
       await this.transporter.sendMail({
@@ -41,13 +47,19 @@ export class NotificationsService {
       this.logger.log(`Email sent to ${to}`);
     } catch (error) {
       this.logger.error(`Error sending email to ${to}`, error);
-      throw new BadRequestException("Could not send mail");
+      throw new BadRequestException('Could not send mail');
     }
   }
 
   // ---- In-App / DB Notifications ----
 
-  async createNotification(userId: number, type: string, title: string, body: string, metadata: any = {}) {
+  async createNotification(
+    userId: number,
+    type: string,
+    title: string,
+    body: string,
+    metadata: any = {},
+  ) {
     const notification = await this.prisma.notification.create({
       data: {
         userId,
@@ -63,7 +75,9 @@ export class NotificationsService {
 
     // Also update unread count
     const unreadCount = await this.getUnreadCount(userId);
-    this.gateway.sendToUser(userId, 'notification:count', { count: unreadCount });
+    this.gateway.sendToUser(userId, 'notification:count', {
+      count: unreadCount,
+    });
 
     return notification;
   }
@@ -86,7 +100,9 @@ export class NotificationsService {
     });
 
     const unreadCount = await this.getUnreadCount(userId);
-    this.gateway.sendToUser(userId, 'notification:count', { count: unreadCount });
+    this.gateway.sendToUser(userId, 'notification:count', {
+      count: unreadCount,
+    });
 
     return notification;
   }
@@ -108,7 +124,12 @@ export class NotificationsService {
 
   // A simple timeout-based reminder for demo purposes
   // In production, you'd use @nestjs/bull or a proper job queue
-  scheduleReminder(userId: number, sessionId: string, title: string, date: Date) {
+  scheduleReminder(
+    userId: number,
+    sessionId: string,
+    title: string,
+    date: Date,
+  ) {
     const now = new Date();
     // Schedule 30 mins before the event
     const runAt = new Date(date.getTime() - 30 * 60 * 1000);
@@ -122,15 +143,22 @@ export class NotificationsService {
             'schedule_reminder',
             'Upcoming Session Reminder',
             `Your session "${title}" is starting in 30 minutes.`,
-            { sessionId }
+            { sessionId },
           );
         } catch (error) {
-          this.logger.error(`Failed to send schedule reminder for session ${sessionId}`, error);
+          this.logger.error(
+            `Failed to send schedule reminder for session ${sessionId}`,
+            error,
+          );
         }
       }, delay);
-      this.logger.log(`Scheduled reminder for session ${sessionId} in ${delay}ms`);
+      this.logger.log(
+        `Scheduled reminder for session ${sessionId} in ${delay}ms`,
+      );
     } else {
-      this.logger.warn(`Reminder for session ${sessionId} is in the past or too soon.`);
+      this.logger.warn(
+        `Reminder for session ${sessionId} is in the past or too soon.`,
+      );
     }
   }
 

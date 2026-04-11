@@ -13,11 +13,14 @@ export class GoogleCalendarService {
     return new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_CALLBACK_URL || 'http://localhost:8000/api/auth/google/callback'
+      process.env.GOOGLE_CALLBACK_URL ||
+        'http://localhost:8000/api/auth/google/callback',
     );
   }
 
-  async getCalendarClient(userId: number): Promise<calendar_v3.Calendar | null> {
+  async getCalendarClient(
+    userId: number,
+  ): Promise<calendar_v3.Calendar | null> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.googleCalendarToken) {
       return null;
@@ -30,7 +33,13 @@ export class GoogleCalendarService {
     return google.calendar({ version: 'v3', auth: oauth2Client });
   }
 
-  async createEvent(userId: number, title: string, description: string, startTime: Date, durationMinutes: number) {
+  async createEvent(
+    userId: number,
+    title: string,
+    description: string,
+    startTime: Date,
+    durationMinutes: number,
+  ) {
     const calendar = await this.getCalendarClient(userId);
     if (!calendar) return null;
 
@@ -54,12 +63,22 @@ export class GoogleCalendarService {
       });
       return response.data;
     } catch (error) {
-      this.logger.error(`Failed to create Google Calendar event for user ${userId}`, error);
+      this.logger.error(
+        `Failed to create Google Calendar event for user ${userId}`,
+        error,
+      );
       return null;
     }
   }
 
-  async updateEvent(userId: number, eventId: string, title: string, description: string, startTime: Date, durationMinutes: number) {
+  async updateEvent(
+    userId: number,
+    eventId: string,
+    title: string,
+    description: string,
+    startTime: Date,
+    durationMinutes: number,
+  ) {
     const calendar = await this.getCalendarClient(userId);
     if (!calendar) return null;
 
@@ -84,7 +103,10 @@ export class GoogleCalendarService {
       });
       return response.data;
     } catch (error) {
-      this.logger.error(`Failed to update Google Calendar event ${eventId} for user ${userId}`, error);
+      this.logger.error(
+        `Failed to update Google Calendar event ${eventId} for user ${userId}`,
+        error,
+      );
       return null;
     }
   }
@@ -100,7 +122,10 @@ export class GoogleCalendarService {
       });
       return true;
     } catch (error) {
-      this.logger.error(`Failed to delete Google Calendar event ${eventId} for user ${userId}`, error);
+      this.logger.error(
+        `Failed to delete Google Calendar event ${eventId} for user ${userId}`,
+        error,
+      );
       return false;
     }
   }

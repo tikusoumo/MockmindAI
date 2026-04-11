@@ -24,7 +24,8 @@ const defaultInterviewTemplates = [
   {
     id: 'tech-system-design',
     title: 'Tech: System Design',
-    description: 'Deep dive into system design concepts and architectural patterns.',
+    description:
+      'Deep dive into system design concepts and architectural patterns.',
     duration: '45-60 min',
     difficulty: 'Advanced',
     icon: 'Cpu',
@@ -33,7 +34,8 @@ const defaultInterviewTemplates = [
   {
     id: 'tech-algorithms',
     title: 'Tech: Algorithms & DS',
-    description: 'Practice data structures and algorithm problems with live coding.',
+    description:
+      'Practice data structures and algorithm problems with live coding.',
     duration: '45 min',
     difficulty: 'Intermediate',
     icon: 'Code',
@@ -42,7 +44,8 @@ const defaultInterviewTemplates = [
   {
     id: 'leadership-management',
     title: 'Leadership & Management',
-    description: 'Questions focused on leadership experience and management scenarios.',
+    description:
+      'Questions focused on leadership experience and management scenarios.',
     duration: '30-45 min',
     difficulty: 'Intermediate',
     icon: 'Briefcase',
@@ -51,9 +54,24 @@ const defaultInterviewTemplates = [
 ];
 
 const defaultProgressStats = [
-  { label: 'Sessions Completed', value: 12, change: 3, history: [8, 10, 9, 11, 12] },
-  { label: 'Average Score', value: 85, change: 5, history: [78, 80, 82, 83, 85] },
-  { label: 'Hours Practiced', value: 24, change: 8, history: [12, 15, 18, 20, 24] },
+  {
+    label: 'Sessions Completed',
+    value: 12,
+    change: 3,
+    history: [8, 10, 9, 11, 12],
+  },
+  {
+    label: 'Average Score',
+    value: 85,
+    change: 5,
+    history: [78, 80, 82, 83, 85],
+  },
+  {
+    label: 'Hours Practiced',
+    value: 24,
+    change: 8,
+    history: [12, 15, 18, 20, 24],
+  },
   { label: 'Streak Days', value: 7, change: 2, history: [3, 4, 5, 5, 7] },
 ];
 
@@ -102,7 +120,10 @@ const defaultReportLatest = {
       'Good use of STAR method',
       'Confident body language',
     ],
-    weaknesses: ['Occasional filler words', 'Could improve pacing in technical sections'],
+    weaknesses: [
+      'Occasional filler words',
+      'Could improve pacing in technical sections',
+    ],
     opportunities: ['Practice more system design', 'Work on concise answers'],
     threats: ['May rush when nervous', 'Complex questions need more structure'],
   },
@@ -129,28 +150,61 @@ const defaultReportLatest = {
       aiFeedback:
         'Great use of STAR method. Consider adding more specific metrics about the impact.',
       score: 88,
-      improvements: ['Add quantifiable outcomes', 'Mention team size explicitly'],
+      improvements: [
+        'Add quantifiable outcomes',
+        'Mention team size explicitly',
+      ],
     },
     {
       id: 2,
       question: 'How would you design a URL shortening service?',
       userAnswerSummary:
         'Covered hashing strategies, database choices, and caching considerations.',
-      aiFeedback: 'Strong technical depth. Could improve by discussing failure scenarios.',
+      aiFeedback:
+        'Strong technical depth. Could improve by discussing failure scenarios.',
       score: 85,
       improvements: ['Discuss failure modes', 'Consider rate limiting'],
     },
   ],
   transcript: [
-    { speaker: 'Interviewer', text: 'Thank you for joining us today.', timestamp: '0:00' },
-    { speaker: 'You', text: 'Thank you for having me. I am excited to be here.', timestamp: '0:05' },
+    {
+      speaker: 'Interviewer',
+      text: 'Thank you for joining us today.',
+      timestamp: '0:00',
+    },
+    {
+      speaker: 'You',
+      text: 'Thank you for having me. I am excited to be here.',
+      timestamp: '0:05',
+    },
   ],
 };
 
 const defaultPastInterviews = [
-  { id: 'int-1', title: 'System Design: URL Shortener', date: '2024-01-10', duration: '45 min', score: 88, type: 'Tech' },
-  { id: 'int-2', title: 'Behavioral: Leadership', date: '2024-01-08', duration: '35 min', score: 82, type: 'Behavioral' },
-  { id: 'int-3', title: 'Tech: React Deep Dive', date: '2024-01-05', duration: '50 min', score: 90, type: 'Tech' },
+  {
+    id: 'int-1',
+    title: 'System Design: URL Shortener',
+    date: '2024-01-10',
+    duration: '45 min',
+    score: 88,
+    type: 'Tech',
+  },
+  {
+    id: 'int-2',
+    title: 'Behavioral: Leadership',
+    date: '2024-01-08',
+    duration: '35 min',
+    score: 82,
+    type: 'Behavioral',
+  },
+  {
+    id: 'int-3',
+    title: 'Tech: React Deep Dive',
+    date: '2024-01-05',
+    duration: '50 min',
+    score: 90,
+    type: 'Tech',
+  },
 ];
 
 @Injectable()
@@ -172,7 +226,7 @@ export class DataService {
           level: true,
           isVerified: true,
           createdAt: true,
-        }
+        },
       });
       return user || this.userData;
     } catch {
@@ -228,6 +282,8 @@ export class DataService {
           icon: data.icon || 'Brain',
           color: data.color || 'bg-blue-500',
           type: data.type || 'Custom',
+          systemPrompt:
+            typeof data.systemPrompt === 'string' ? data.systemPrompt : null,
         },
       });
     } catch (error) {
@@ -249,6 +305,15 @@ export class DataService {
           icon: data.icon,
           color: data.color,
           type: data.type,
+          isPublished:
+            data.isPublished !== undefined ? data.isPublished : undefined,
+          publishedAt: data.publishedAt
+            ? new Date(data.publishedAt)
+            : undefined,
+          systemPrompt:
+            typeof data.systemPrompt === 'string'
+              ? data.systemPrompt
+              : undefined,
         },
       });
     } catch (error) {
@@ -316,24 +381,25 @@ export class DataService {
       }
       const condition = filters.length > 0 ? { OR: filters } : {};
       const reports = await this.prisma.report.findMany({
-          where: condition,
-          orderBy: { date: 'desc' },
-          include: { 
-              session: {
-                  include: { template: true }
-              } 
-          }
+        where: condition,
+        orderBy: { date: 'desc' },
+        include: {
+          session: {
+            include: { template: true },
+          },
+        },
       });
-      return reports.map(r => ({
-          id: r.id,
-          title: r.session?.title || r.session?.template?.title || "Interview Session",
-          date: r.date.toISOString(),
-          duration: r.duration || "45:00",
-          type: r.session?.template?.type || "Technical",
-          score: r.overallScore || 0
+      return reports.map((r) => ({
+        id: r.id,
+        title:
+          r.session?.title || r.session?.template?.title || 'Interview Session',
+        date: r.date.toISOString(),
+        duration: r.duration || '45:00',
+        type: r.session?.template?.type || 'Technical',
+        score: r.overallScore || 0,
       }));
     } catch (e) {
-      console.error("Error fetching past interviews:", e);
+      console.error('Error fetching past interviews:', e);
       return [];
     }
   }
@@ -345,7 +411,7 @@ export class DataService {
       return await this.prisma.report.create({
         data: {
           id: rest.id,
-          session: { connect: { id: rest.sessionId || "dummy" } },
+          session: { connect: { id: rest.sessionId || 'dummy' } },
           date: rest.date,
           overallScore: rest.overallScore,
           duration: rest.duration,
@@ -365,17 +431,17 @@ export class DataService {
               aiFeedback: q.aiFeedback,
               score: q.score,
               improvements: q.improvements,
-              audioUrl: q.audioUrl || null
-            }))
+              audioUrl: q.audioUrl || null,
+            })),
           },
           transcripts: {
             create: (transcript || []).map((t: any) => ({
               speaker: t.speaker,
               text: t.text,
-              timestamp: t.timestamp
-            }))
-          }
-        }
+              timestamp: t.timestamp,
+            })),
+          },
+        },
       });
     } catch (error) {
       console.error('Failed to create report in DB:', error);

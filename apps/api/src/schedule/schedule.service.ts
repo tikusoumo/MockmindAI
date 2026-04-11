@@ -24,7 +24,7 @@ export class ScheduleService {
   async createSession(userId: number, data: any) {
     // Basic standard duration if none provided via template/routine
     const durationMinutes = data.duration || 30;
-    
+
     // Create DB entry
     const session = await this.prisma.scheduledSession.create({
       data: {
@@ -48,7 +48,7 @@ export class ScheduleService {
         session.title,
         session.description || 'AI Mock Interview Practice Session',
         session.date,
-        durationMinutes
+        durationMinutes,
       );
 
       if (gcalEvent && gcalEvent.id) {
@@ -59,14 +59,21 @@ export class ScheduleService {
       }
 
       // Schedule in-app Notification
-      this.notifications.scheduleReminder(userId, session.id, session.title, session.date);
+      this.notifications.scheduleReminder(
+        userId,
+        session.id,
+        session.title,
+        session.date,
+      );
     }
 
     return session;
   }
 
   async updateSession(userId: number, id: string, data: any) {
-    const session = await this.prisma.scheduledSession.findUnique({ where: { id, userId } });
+    const session = await this.prisma.scheduledSession.findUnique({
+      where: { id, userId },
+    });
     if (!session) throw new NotFoundException('Session not found');
 
     const updated = await this.prisma.scheduledSession.update({
@@ -89,7 +96,7 @@ export class ScheduleService {
         updated.title,
         updated.description || '',
         updated.date,
-        data.duration || 30
+        data.duration || 30,
       );
     }
 
@@ -97,7 +104,9 @@ export class ScheduleService {
   }
 
   async deleteSession(userId: number, id: string) {
-    const session = await this.prisma.scheduledSession.findUnique({ where: { id, userId } });
+    const session = await this.prisma.scheduledSession.findUnique({
+      where: { id, userId },
+    });
     if (!session) throw new NotFoundException('Session not found');
 
     if (session.googleEventId) {
@@ -116,9 +125,9 @@ export class ScheduleService {
       include: {
         sessions: {
           orderBy: { date: 'asc' },
-          take: 5
-        }
-      }
+          take: 5,
+        },
+      },
     });
   }
 
@@ -129,13 +138,14 @@ export class ScheduleService {
       data: {
         userId,
         title: data?.title || 'AI Suggested Weekly Prep',
-        description: data?.description || 'Focusing on System Design and Behavioral',
+        description:
+          data?.description || 'Focusing on System Design and Behavioral',
         frequency: data?.frequency || 'weekly',
         focusAreas: data?.focusAreas || ['System Design', 'Behavioral'],
         duration: data?.duration || 45,
         startDate: new Date(),
         endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days default
-      }
+      },
     });
 
     return newRoutine;
@@ -151,7 +161,7 @@ export class ScheduleService {
         focusAreas: data.focusAreas,
         duration: data.duration,
         isActive: data.isActive,
-      }
+      },
     });
   }
 }

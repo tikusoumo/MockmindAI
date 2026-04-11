@@ -17,6 +17,8 @@ import { toast } from "sonner";
 import { jwtDecode } from "jwt-decode";
 import { formatDistanceToNow } from "date-fns";
 
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
 export default function CommunityPage() {
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +52,7 @@ export default function CommunityPage() {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/community/posts?tab=${activeTab}&search=${search}`, {
+      const res = await fetch(`${API_BASE}/api/community/posts?tab=${activeTab}&search=${search}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) setPosts(await res.json());
@@ -66,7 +68,7 @@ export default function CommunityPage() {
     try {
       const token = localStorage.getItem('token');
       const tagsArray = newTags.split(',').map(t => t.trim()).filter(t => t);
-      const res = await fetch('/api/community/posts', {
+      const res = await fetch(`${API_BASE}/api/community/posts`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle, content: newContent, tags: tagsArray })
@@ -85,7 +87,7 @@ export default function CommunityPage() {
   const handleDeletePost = async (id: string) => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/community/posts/${id}`, {
+      const res = await fetch(`${API_BASE}/api/community/posts/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -99,7 +101,7 @@ export default function CommunityPage() {
   const handleToggleLike = async (postId: string) => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/community/posts/${postId}/like`, {
+      const res = await fetch(`${API_BASE}/api/community/posts/${postId}/like`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -122,7 +124,7 @@ export default function CommunityPage() {
   const loadComments = async (postId: string) => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/community/posts/${postId}/comments`, {
+      const res = await fetch(`${API_BASE}/api/community/posts/${postId}/comments`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -152,7 +154,7 @@ export default function CommunityPage() {
     if (!content) return;
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/community/posts/${postId}/comments`, {
+      const res = await fetch(`${API_BASE}/api/community/posts/${postId}/comments`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ content })
@@ -173,7 +175,7 @@ export default function CommunityPage() {
   const handleDeleteComment = async (postId: string, commentId: string) => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/community/comments/${commentId}`, {
+      const res = await fetch(`${API_BASE}/api/community/comments/${commentId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

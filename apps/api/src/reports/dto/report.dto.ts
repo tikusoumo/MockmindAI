@@ -8,6 +8,7 @@ import {
   Max,
   ValidateNested,
   IsEnum,
+  IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -90,7 +91,9 @@ export class QuestionFeedbackDto {
   @IsString({ each: true })
   improvements: string[];
 
-  @ApiPropertyOptional({ description: 'Optional recording URL for this question audio' })
+  @ApiPropertyOptional({
+    description: 'Optional recording URL for this question audio',
+  })
   @IsOptional()
   @IsString()
   audioUrl?: string;
@@ -190,6 +193,69 @@ export class ResourceDto {
   url: string;
 }
 
+export class CodeHistoryEntryDto {
+  @ApiProperty({ description: 'Stable snapshot ID (e.g. SNAP-0004)' })
+  @IsString()
+  id: string;
+
+  @ApiProperty({ description: 'Actor who made the change (ai/user/system)' })
+  @IsString()
+  actor: string;
+
+  @ApiProperty({
+    description: 'Event type (code_change, code_apply, test_run, test_case)',
+  })
+  @IsString()
+  eventType: string;
+
+  @ApiProperty({ description: 'Human-readable summary of the coding event' })
+  @IsString()
+  summary: string;
+
+  @ApiProperty({
+    description: 'Timestamp in MM:SS or ISO format depending on source',
+  })
+  @IsString()
+  timestamp: string;
+
+  @ApiPropertyOptional({ description: 'Programming language for the event' })
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  @ApiPropertyOptional({ description: 'Code snapshot at this history step' })
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @ApiPropertyOptional({
+    description: 'Additional event details',
+    type: Object,
+  })
+  @IsOptional()
+  @IsObject()
+  details?: Record<string, unknown>;
+}
+
+export class AudioTrackDto {
+  @ApiProperty({ description: 'Track identifier', example: 'candidate-track' })
+  @IsString()
+  id: string;
+
+  @ApiProperty({ description: 'Display label for this audio track' })
+  @IsString()
+  label: string;
+
+  @ApiProperty({ description: 'Speaker for this audio track' })
+  @IsString()
+  speaker: string;
+
+  @ApiPropertyOptional({ description: 'Resolved audio URL for playback' })
+  @IsOptional()
+  @IsString()
+  audioUrl?: string;
+}
+
 // Complete report response
 export class ReportResponseDto {
   @ApiProperty()
@@ -270,10 +336,66 @@ export class ReportResponseDto {
   @Type(() => ResourceDto)
   resources: ResourceDto[];
 
-  @ApiPropertyOptional({ description: 'Shared recording URL that can be used as fallback question audio' })
+  @ApiPropertyOptional({
+    description:
+      'Shared recording URL that can be used as fallback question audio',
+  })
   @IsOptional()
   @IsString()
   recordingAudioUrl?: string;
+
+  @ApiPropertyOptional({
+    type: [CodeHistoryEntryDto],
+    description: 'Coding and testing timeline for technical rounds',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CodeHistoryEntryDto)
+  codeHistory?: CodeHistoryEntryDto[];
+
+  @ApiPropertyOptional({
+    type: [AudioTrackDto],
+    description:
+      'Resolved audio tracks for candidate and AI/interviewer voices',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AudioTrackDto)
+  audioTracks?: AudioTrackDto[];
+}
+
+export class AskReportCoachRequestDto {
+  @ApiProperty({ description: 'Question for AI coach about this report' })
+  @IsString()
+  question: string;
+}
+
+export class AskReportCoachResponseDto {
+  @ApiProperty({ description: 'Coach answer generated from report analytics' })
+  @IsString()
+  answer: string;
+
+  @ApiProperty({
+    type: [String],
+    description: 'Key highlights that support the answer',
+  })
+  @IsArray()
+  @IsString({ each: true })
+  highlights: string[];
+
+  @ApiProperty({
+    type: [String],
+    description: 'Suggested follow-up questions for the user',
+  })
+  @IsArray()
+  @IsString({ each: true })
+  suggestedQuestions: string[];
+
+  @ApiProperty({ description: 'Response generation timestamp in ISO format' })
+  @IsString()
+  generatedAt: string;
 }
 
 // Request to generate a report

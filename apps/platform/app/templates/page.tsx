@@ -18,6 +18,8 @@ import { useRouter } from "next/navigation";
 import type { InterviewTemplate } from "@/data/mockData";
 import { toast } from "sonner";
 
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
 const ICON_OPTIONS = ["Brain", "Code", "Users", "Zap", "Target"];
 const COLOR_OPTIONS = [
   { label: "Blue", value: "bg-blue-500" },
@@ -146,7 +148,7 @@ export default function TemplatesIndexPage() {
     setLoadingCommunity(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/community/templates', {
+      const res = await fetch(`${API_BASE}/api/community/templates`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) setCommunityTemplates(await res.json());
@@ -166,7 +168,7 @@ export default function TemplatesIndexPage() {
   const handleCloneTemplate = async (templateId: string) => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/community/templates/${templateId}/use`, {
+      const res = await fetch(`${API_BASE}/api/community/templates/${templateId}/use`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });

@@ -11,6 +11,20 @@ import { Sparkles, UploadCloud, Save, Play, Plus, Trash2, Users } from "lucide-r
 import type { InterviewTemplate } from "@/data/mockData";
 import { cn } from "@/lib/utils";
 
+const MIN_HISTORY_INTERVAL_SECONDS = 5;
+const MAX_HISTORY_INTERVAL_SECONDS = 300;
+
+function normalizeHistoryInterval(raw: unknown): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return 30;
+  }
+  return Math.max(
+    MIN_HISTORY_INTERVAL_SECONDS,
+    Math.min(MAX_HISTORY_INTERVAL_SECONDS, Math.round(parsed)),
+  );
+}
+
 interface CustomSessionFormProps {
   initialData?: InterviewTemplate | null;
   isAdmin?: boolean;
@@ -28,6 +42,9 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
   const [mode, setMode] = React.useState<string>(initialData?.mode || "learning");
   const [accessType, setAccessType] = React.useState<string>("link");
   const [persona, setPersona] = React.useState<string>("sarah");
+  const [historySnapshotIntervalSec, setHistorySnapshotIntervalSec] = React.useState<string>(
+    String(normalizeHistoryInterval(initialData?.historySnapshotIntervalSec ?? 30)),
+  );
 
   const [interviewerCount, setInterviewerCount] = React.useState<string>("1");
   const [invites, setInvites] = React.useState<{email: string, role: string}[]>([]);
@@ -74,6 +91,9 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
       setType(initialData.type || "Technical");
       setDifficulty(initialData.difficulty || "Medium");
       setMode(initialData.mode || "learning");
+      setHistorySnapshotIntervalSec(
+        String(normalizeHistoryInterval(initialData.historySnapshotIntervalSec ?? 30)),
+      );
       setIsGlobal(false);
     }
   }, [initialData]);
@@ -89,7 +109,19 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
   };
 
   const handleStart = () => {
-    onStart({ topic, description, type, difficulty, mode, persona, accessType, interviewerCount, invites, files: selectedFiles });
+    onStart({
+      topic,
+      description,
+      type,
+      difficulty,
+      mode,
+      persona,
+      accessType,
+      interviewerCount,
+      invites,
+      files: selectedFiles,
+      historySnapshotIntervalSec: normalizeHistoryInterval(historySnapshotIntervalSec),
+    });
   };
 
   const handleSave = () => {
@@ -103,6 +135,8 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
         mode,
         accessType,
         interviewerCount,
+        historySnapshotIntervalSec: normalizeHistoryInterval(historySnapshotIntervalSec),
+        systemPrompt: initialData?.systemPrompt,
         icon: initialData?.icon || 'Sparkles',
         color: initialData?.color || 'bg-blue-500/10 text-blue-500',
         duration: initialData?.duration || '45 min'
@@ -286,6 +320,24 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
                     <SelectItem value="alex">Alex (Inquisitive & Detail-oriented)</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="historySnapshotIntervalSec">
+                  Code History Interval (seconds)
+                </Label>
+                <Input
+                  id="historySnapshotIntervalSec"
+                  type="number"
+                  min={MIN_HISTORY_INTERVAL_SECONDS}
+                  max={MAX_HISTORY_INTERVAL_SECONDS}
+                  value={historySnapshotIntervalSec}
+                  onChange={(e) => setHistorySnapshotIntervalSec(e.target.value)}
+                  placeholder="30"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Candidate IDE snapshots are saved every {MIN_HISTORY_INTERVAL_SECONDS}-{MAX_HISTORY_INTERVAL_SECONDS} seconds.
+                </p>
               </div>
             </div>
           </section>

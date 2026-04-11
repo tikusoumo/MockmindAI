@@ -1,18 +1,68 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
+const MIN_HISTORY_INTERVAL_SECONDS = 5;
+const MAX_HISTORY_INTERVAL_SECONDS = 300;
+
+function normalizeHistoryInterval(raw: unknown): number | null {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return Math.max(
+    MIN_HISTORY_INTERVAL_SECONDS,
+    Math.min(MAX_HISTORY_INTERVAL_SECONDS, Math.round(parsed)),
+  );
+}
+
+function mergeSystemPromptWithHistoryInterval(
+  systemPrompt: unknown,
+  historyIntervalSec: unknown,
+): string | null {
+  const normalizedInterval = normalizeHistoryInterval(historyIntervalSec);
+  const basePrompt =
+    typeof systemPrompt === 'string' ? systemPrompt.trim() : '';
+
+  if (normalizedInterval === null) {
+    return basePrompt || null;
+  }
+
+  let payload: Record<string, unknown> = {};
+
+  if (basePrompt) {
+    try {
+      const parsed = JSON.parse(basePrompt);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        payload = parsed as Record<string, unknown>;
+      } else {
+        payload = { prompt: basePrompt };
+      }
+    } catch {
+      payload = { prompt: basePrompt };
+    }
+  }
+
+  payload.historySnapshotIntervalSec = normalizedInterval;
+  return JSON.stringify(payload);
+}
+
 @Injectable()
 export class SessionsService {
   constructor(private prisma: PrismaService) {}
 
   async createSession(userId: number, data: any) {
     const participants: any[] = [];
-    
+    const sessionSystemPrompt = mergeSystemPromptWithHistoryInterval(
+      data.systemPrompt,
+      data.historySnapshotIntervalSec,
+    );
+
     // Add the creator as the default participant
     participants.push({
       email: data.participantEmail || 'candidate@example.com',
       role: 'Candidate',
-      status: 'joined'
+      status: 'joined',
     });
 
     // Add invites if present
@@ -22,45 +72,52 @@ export class SessionsService {
           participants.push({
             email: inv.email,
             role: inv.role || 'Observer',
-            status: 'invited'
+            status: 'invited',
           });
         }
       });
     }
 
-    return this.prisma.interviewSession.create({
-      data: {
-        userId,
-        title: data.topic || data.title || 'Custom Interview Session',
-        jobRole: data.jobRole,
-        focusAreas: data.description || data.focusAreas,
-        companyInfo: data.companyInfo,
-        resumeText: data.resumeText,
-        type: data.type || 'Technical',
-        difficulty: data.difficulty || 'medium',
-        aiBehavior: data.mode || data.aiBehavior || 'learning',
-        persona: data.persona || 'Sarah',
-        status: 'pending',
-        materials: data.files || data.materials || [],
-        participants: {
-          create: participants
+    return this.prisma.interviewSession
+      .create({
+        data: {
+          userId,
+          title: data.topic || data.title || 'Custom Interview Session',
+          jobRole: data.jobRole,
+          focusAreas: data.description || data.focusAreas,
+          companyInfo: data.companyInfo,
+          resumeText: data.resumeText,
+          type: data.type || 'Technical',
+          difficulty: data.difficulty || 'medium',
+          aiBehavior: data.mode || data.aiBehavior || 'learning',
+          persona: data.persona || 'Sarah',
+          systemPrompt: sessionSystemPrompt,
+          status: 'pending',
+          materials: data.files || data.materials || [],
+          participants: {
+            create: participants,
+          },
+        },
+      })
+      .then((session) => {
+        // Mock sending email to invited participants
+        if (data.invites && Array.isArray(data.invites)) {
+          console.log(
+            `\n\n[Email Service] \x1b[32mSending invitations for session ${session.id}\x1b[0m`,
+          );
+          data.invites.forEach((inv: any) => {
+            if (inv.email) {
+              const meetingLink = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/interview?sessionId=${session.id}`;
+              console.log(`  -> To: ${inv.email}`);
+              console.log(
+                `     Subject: You're invited to an Interview Session: ${session.title}`,
+              );
+              console.log(`     Link to join: ${meetingLink}\n`);
+            }
+          });
         }
-      },
-    }).then(session => {
-      // Mock sending email to invited participants
-      if (data.invites && Array.isArray(data.invites)) {
-        console.log(`\n\n[Email Service] \x1b[32mSending invitations for session ${session.id}\x1b[0m`);
-        data.invites.forEach((inv: any) => {
-          if (inv.email) {
-            const meetingLink = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/interview?sessionId=${session.id}`;
-            console.log(`  -> To: ${inv.email}`);
-            console.log(`     Subject: You're invited to an Interview Session: ${session.title}`);
-            console.log(`     Link to join: ${meetingLink}\n`);
-          }
-        });
-      }
-      return session;
-    });
+        return session;
+      });
   }
 
   async getSession(id: string, userId: number, userEmail?: string) {
@@ -78,6 +135,7 @@ export class SessionsService {
       include: {
         participants: true,
         report: true,
+        template: true,
       },
     });
 
@@ -94,11 +152,16 @@ export class SessionsService {
       orderBy: { createdAt: 'desc' },
       include: {
         participants: true,
-      }
+      },
     });
   }
 
-  async updateSession(id: string, userId: number, userEmail: string | undefined, data: any) {
+  async updateSession(
+    id: string,
+    userId: number,
+    userEmail: string | undefined,
+    data: any,
+  ) {
     const session = await this.getSession(id, userId, userEmail);
     return this.prisma.interviewSession.update({
       where: { id: session.id },
@@ -106,7 +169,12 @@ export class SessionsService {
     });
   }
 
-  async inviteToSession(id: string, userId: number, emails: string[], accessType?: string) {
+  async inviteToSession(
+    id: string,
+    userId: number,
+    emails: string[],
+    accessType?: string,
+  ) {
     const session = await this.prisma.interviewSession.findFirst({
       where: { id, userId },
       include: { participants: true },
@@ -117,7 +185,11 @@ export class SessionsService {
     }
 
     const normalized = (emails || [])
-      .map((email) => String(email || '').trim().toLowerCase())
+      .map((email) =>
+        String(email || '')
+          .trim()
+          .toLowerCase(),
+      )
       .filter((email) => email.length > 0);
 
     if (normalized.length === 0) {
@@ -125,7 +197,11 @@ export class SessionsService {
     }
 
     const existingEmails = new Set(
-      (session.participants || []).map((p) => String(p.email || '').trim().toLowerCase()),
+      (session.participants || []).map((p) =>
+        String(p.email || '')
+          .trim()
+          .toLowerCase(),
+      ),
     );
 
     const newParticipants = normalized
@@ -146,11 +222,15 @@ export class SessionsService {
         })),
       });
 
-      console.log(`\n\n[Email Service] \x1b[32mSending invitations for session ${session.id}\x1b[0m`);
+      console.log(
+        `\n\n[Email Service] \x1b[32mSending invitations for session ${session.id}\x1b[0m`,
+      );
       newParticipants.forEach((p) => {
         const meetingLink = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/interview?sessionId=${session.id}`;
         console.log(`  -> To: ${p.email}`);
-        console.log(`     Subject: You're invited to an Interview Session: ${session.title}`);
+        console.log(
+          `     Subject: You're invited to an Interview Session: ${session.title}`,
+        );
         console.log(`     Link to join: ${meetingLink}\n`);
       });
     }

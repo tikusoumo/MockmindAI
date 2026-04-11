@@ -16,11 +16,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [
-    AuthService,
-    PrismaService,
-    GoogleStrategy,
-    JwtStrategy,
-  ],
+  providers: [AuthService, PrismaService, GoogleStrategy, JwtStrategy],
 })
 export class AuthModule {}

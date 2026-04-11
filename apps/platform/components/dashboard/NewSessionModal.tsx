@@ -66,11 +66,17 @@ const handleStartFromTemplate = async () => {
             description: template.description || "",
             difficulty: template.difficulty || "medium",
             mode: "strict",
-            accessType: "link"
+            accessType: "link",
+            historySnapshotIntervalSec: template.historySnapshotIntervalSec,
+            systemPrompt: template.systemPrompt,
           };
           const response = await backendPost<{id: string}>("/api/sessions", data);
           setStartingText("Connecting to AI Interviewer...");
-          router.push(`/interview?sessionId=${response.id}`);
+          const params = new URLSearchParams({ sessionId: response.id });
+          if (template.historySnapshotIntervalSec) {
+            params.set("historyIntervalSec", String(template.historySnapshotIntervalSec));
+          }
+          router.push(`/interview?${params.toString()}`);
           setOpen(false);
           return;
         } catch (e) {
@@ -80,7 +86,14 @@ const handleStartFromTemplate = async () => {
       }
       setIsStarting(true);
       setStartingText("Loading Interview Plan...");
-      router.push(`/interview?template=${selectedTemplateId}&mode=strict`);
+      const fallbackParams = new URLSearchParams({
+        template: selectedTemplateId,
+        mode: "strict",
+      });
+      if (template?.historySnapshotIntervalSec) {
+        fallbackParams.set("historyIntervalSec", String(template.historySnapshotIntervalSec));
+      }
+      router.push(`/interview?${fallbackParams.toString()}`);
       setOpen(false);
     }
   };
@@ -120,7 +133,8 @@ const handleStartFromTemplate = async () => {
         mode: data.mode,
         difficulty: data.difficulty,
         type: data.type,
-        persona: data.persona
+        persona: data.persona,
+        historyIntervalSec: String(data.historySnapshotIntervalSec || 30),
       });
       router.push(`/interview?${params.toString()}`);
       setOpen(false);
@@ -133,7 +147,8 @@ const handleStartFromTemplate = async () => {
         mode: data.mode,
         difficulty: data.difficulty,
         type: data.type,
-        persona: data.persona
+        persona: data.persona,
+        historyIntervalSec: String(data.historySnapshotIntervalSec || 30),
       });
       router.push(`/interview?${params.toString()}`);
       setOpen(false);

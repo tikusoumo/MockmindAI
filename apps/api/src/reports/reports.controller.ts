@@ -14,7 +14,15 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiQuery,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ReportsService } from './reports.service';
 import { Logger } from '@nestjs/common';
@@ -22,6 +30,8 @@ import {
   ReportResponseDto,
   ReportListItemDto,
   GenerateReportRequestDto,
+  AskReportCoachRequestDto,
+  AskReportCoachResponseDto,
 } from './dto';
 
 @ApiTags('Reports')
@@ -32,15 +42,23 @@ export class ReportsController {
 
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Webhook to receive generated reports from Python agent' })
+  @ApiOperation({
+    summary: 'Webhook to receive generated reports from Python agent',
+  })
   async reportWebhook(@Body() payload: any): Promise<void> {
     return this.reportsService.saveWebhookReport(payload);
   }
 
   @Post('recordings/:sessionId')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Upload a recorded interview audio file for a session' })
-  @ApiParam({ name: 'sessionId', type: 'string', description: 'Interview session ID' })
+  @ApiOperation({
+    summary: 'Upload a recorded interview audio file for a session',
+  })
+  @ApiParam({
+    name: 'sessionId',
+    type: 'string',
+    description: 'Interview session ID',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -82,7 +100,11 @@ export class ReportsController {
 
   @Get()
   @ApiOperation({ summary: 'List all reports' })
-  @ApiQuery({ name: 'userId', required: false, description: 'Filter by user ID' })
+  @ApiQuery({
+    name: 'userId',
+    required: false,
+    description: 'Filter by user ID',
+  })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'List of reports',
@@ -105,6 +127,25 @@ export class ReportsController {
     return this.reportsService.getLatestReport();
   }
 
+  @Post(':id/ask')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Ask AI coach a question about this report' })
+  @ApiParam({ name: 'id', description: 'Report ID or latest' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Coach response generated successfully',
+  })
+  async askCoach(
+    @Param('id') id: string,
+    @Body() dto: AskReportCoachRequestDto,
+  ): Promise<AskReportCoachResponseDto> {
+    if (!dto?.question || !dto.question.trim()) {
+      throw new BadRequestException('Question is required');
+    }
+
+    return this.reportsService.askCoachAboutReport(id, dto.question);
+  }
+
   @Get(':id/pdf')
   @ApiOperation({ summary: 'Download a report as PDF' })
   @ApiParam({ name: 'id', description: 'Report ID or latest' })
@@ -116,7 +157,8 @@ export class ReportsController {
     @Param('id') id: string,
     @Res() res: Response,
   ): Promise<void> {
-    const { buffer, fileName } = await this.reportsService.generateReportPdf(id);
+    const { buffer, fileName } =
+      await this.reportsService.generateReportPdf(id);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Length', buffer.length.toString());

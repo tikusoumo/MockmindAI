@@ -190,7 +190,7 @@ _TOOL_CALL_BLOCK_RE = re.compile(
 )
 _TOOL_CALL_TAG_RE = re.compile(r"<\s*/?\s*tool_call\s*>", flags=re.IGNORECASE)
 _INTERNAL_TOOL_NAME_RE = re.compile(
-    r"\b(read_candidates_code|update_candidate_code|request_document_context|provide_feedback|get_interview_tip)\b",
+    r"\b(read_candidates_code|update_candidate_code|run_candidate_tests|request_document_context|provide_feedback|get_interview_tip)\b",
     flags=re.IGNORECASE,
 )
 
@@ -533,6 +533,7 @@ class InterviewCoach(Agent):
                         - Proactively inspect live code frequently with read_candidates_code, especially before feedback or a new prompt.
                         - Keep tool use silent and speak only in natural interviewer language.
                         - Use update_candidate_code for small collaborative edits when the candidate is stuck, buggy, or asks for help.
+                        - Use run_candidate_tests to execute concrete test cases against the current IDE code before final recommendations.
                         - If you say you changed code, you must first call update_candidate_code in that same turn.
                         - Never claim an IDE edit was applied unless update_candidate_code succeeded.
                         - Never speak internal issues like 'tool unavailable' or 'editor not accessible'; ask the candidate to continue typing while you review.
@@ -664,7 +665,108 @@ class InterviewCoach(Agent):
         else:
             self.current_ide_content = sanitized_code
 
+        if self.collector:
+            self.collector.add_code_history_event(
+                actor="ai",
+                event_type="code_apply",
+                summary=(
+                    note
+                    or (
+                        "Appended assistant code in IDE."
+                        if normalized_intent == "append"
+                        else "Applied assistant code update in IDE."
+                    )
+                ),
+                language=self.current_ide_language,
+                details={
+                    "intent": normalized_intent,
+                    "charCount": len(sanitized_code),
+                    "codeSnapshot": self.current_ide_content,
+                },
+            )
+
         return "IDE update applied."
+
+    @function_tool()
+    async def run_candidate_tests(
+        self,
+        context: RunContext,
+        test_cases: list[str] | None = None,
+        stdin: str = "",
+        note: str = "",
+    ) -> str:
+        """Request execution of current IDE code with optional test cases.
+
+        Args:
+            test_cases: Optional list of stdin payloads. Each entry runs as an isolated test case.
+            stdin: Optional single stdin payload when no explicit test_cases are provided.
+            note: Short explanation shown in UI before executing test cases.
+        """
+        if not self.ide_enabled:
+            return "IDE collaboration is disabled for this interview round."
+
+        if not self._ide_sender:
+            return "IDE collaboration channel is not available right now."
+
+        normalized_cases: list[dict[str, str]] = []
+        if isinstance(test_cases, list):
+            for idx, item in enumerate(test_cases[:8]):
+                case_value = str(item or "")
+                if not case_value.strip():
+                    continue
+                normalized_cases.append(
+                    {
+                        "label": f"Case {idx + 1}",
+                        "stdin": case_value[:1000],
+                    }
+                )
+
+        fallback_stdin = str(stdin or "")[:1000]
+        if not normalized_cases and not fallback_stdin.strip():
+            return "Provide at least one test case or stdin input to run tests."
+
+        request_id = f"ide-exec-{uuid.uuid4().hex[:10]}"
+        payload: dict[str, Any] = {
+            "type": "ide_execute_request",
+            "requestId": request_id,
+            "source": "ai",
+            "timestamp": int(time.time() * 1000),
+            "note": _compact_text(
+                note or "Running requested test cases against the current code.",
+                220,
+            ),
+        }
+
+        if normalized_cases:
+            payload["testCases"] = normalized_cases
+        else:
+            payload["stdin"] = fallback_stdin
+
+        try:
+            await self._ide_sender(payload)
+        except Exception as e:
+            logger.warning("Failed to publish IDE execute request: %s", e)
+            return "Unable to trigger IDE test execution right now due to a channel issue."
+
+        if self.collector:
+            self.collector.add_code_history_event(
+                actor="ai",
+                event_type="test_case",
+                summary=(
+                    f"Queued {len(normalized_cases)} AI test case(s) for execution."
+                    if normalized_cases
+                    else "Queued AI stdin test execution."
+                ),
+                language=self.current_ide_language,
+                details={
+                    "source": "ai",
+                    "requestId": request_id,
+                    "caseCount": len(normalized_cases),
+                    "codeSnapshot": self.current_ide_content,
+                },
+            )
+
+        return "Requested IDE test execution."
 
     @function_tool()
     async def get_interview_tip(
@@ -806,7 +908,10 @@ def prewarm(proc: JobProcess):
             logger.warning("Failed to prewarm RAG embedder: %s", e)
 
     if settings.rag_prewarm_embedder:
-        threading.Thread(target=_prewarm_rag_embedder, name="rag-prewarm", daemon=True).start()
+        # Keep prewarm in the worker process thread.
+        # Some third-party libraries used by the embedder can create asyncio loops
+        # during initialization and are noisy when started from daemon threads.
+        _prewarm_rag_embedder()
 
     def _prewarm_report_analyzers() -> None:
         if not settings.analysis_enabled:
@@ -819,11 +924,7 @@ def prewarm(proc: JobProcess):
         except Exception as e:
             logger.warning("Failed to prewarm report analyzers: %s", e)
 
-    threading.Thread(
-        target=_prewarm_report_analyzers,
-        name="report-prewarm",
-        daemon=True,
-    ).start()
+    _prewarm_report_analyzers()
 
 
 server.setup_fnc = prewarm
@@ -1354,6 +1455,18 @@ async def voice_agent(ctx: JobContext):
         try:
             await publish_ide_event(payload)
             agent.current_ide_content = f"{agent.current_ide_content}{snippet}"
+            collector.add_code_history_event(
+                actor="ai",
+                event_type="code_apply",
+                summary="Inserted interview note snippet into IDE to continue coding.",
+                language=agent.current_ide_language,
+                details={
+                    "intent": "append",
+                    "charCount": len(snippet),
+                    "source": "fallback_transcript_trigger",
+                    "codeSnapshot": agent.current_ide_content,
+                },
+            )
             logger.info(
                 "Applied direct IDE fallback write from transcript request (chars=%d, language=%s)",
                 len(snippet),
@@ -1476,7 +1589,9 @@ async def voice_agent(ctx: JobContext):
                 return
 
             payload = json.loads(payload_text)
-            if payload.get("type") == "ide_change":
+            payload_type = str(payload.get("type", "")).strip().lower()
+
+            if payload_type == "ide_change":
                 previous_code = agent.current_ide_content
                 source = str(payload.get("source", "")).strip().lower()
                 incoming_code = payload.get("code", "")
@@ -1484,6 +1599,8 @@ async def voice_agent(ctx: JobContext):
                 incoming_language = payload.get("language")
                 if isinstance(incoming_language, str) and incoming_language.strip():
                     agent.current_ide_language = incoming_language
+
+                delta_chars = abs(len(incoming_code or "") - len(previous_code or ""))
                 logger.info(
                     "Received IDE change event (source=%s, chars=%d, language=%s)",
                     source or "unknown",
@@ -1491,22 +1608,54 @@ async def voice_agent(ctx: JobContext):
                     agent.current_ide_language,
                 )
 
+                if agent.ide_enabled and source in {"", "candidate", "user"}:
+                    has_meaningful_change = (
+                        delta_chars >= 8
+                        or (
+                            bool(incoming_code and incoming_code.strip())
+                            and not bool(previous_code and previous_code.strip())
+                        )
+                    )
+                    if has_meaningful_change:
+                        first_code_line = ""
+                        for line in (incoming_code or "").splitlines():
+                            if line.strip():
+                                first_code_line = _compact_text(line.strip(), 120)
+                                break
+
+                        collector.add_code_history_event(
+                            actor="user",
+                            event_type="code_change",
+                            summary=(
+                                f"Updated code: {first_code_line}"
+                                if first_code_line
+                                else f"Updated editor content ({len(incoming_code or '')} chars)."
+                            ),
+                            language=agent.current_ide_language,
+                            details={
+                                "source": source or "candidate",
+                                "charCount": len(incoming_code or ""),
+                                "deltaChars": delta_chars,
+                                "intervalSec": payload.get("intervalSec"),
+                                "codeSnapshot": incoming_code,
+                            },
+                        )
+
                 should_nudge = False
-                if agent.ide_enabled and source in {"", "candidate"}:
+                if agent.ide_enabled and source in {"", "candidate", "user"}:
                     now = time.monotonic()
-                    delta_chars = abs(len(incoming_code or "") - len(previous_code or ""))
-                    
+
                     # Logic to check if agent is currently speaking or thinking
                     is_agent_busy = (
                         session.agent_state == "speaking" 
                         or session.agent_state == "thinking"
                     )
-                    
+
                     can_speak_now = (
                         session.user_state == "listening"
                         and not is_agent_busy
                     )
-                    
+
                     should_nudge = (
                         bool(incoming_code and incoming_code.strip())
                         and delta_chars >= proactive_ide_min_delta_chars
@@ -1532,7 +1681,68 @@ async def voice_agent(ctx: JobContext):
                     )
                     last_proactive_ide_prompt_at = time.monotonic()
                     logger.debug("Triggered proactive IDE follow-up prompt.")
-            elif payload.get("type") in {"finalize_interview", "interview_end"}:
+            elif payload_type in {
+                "ide_test_run",
+                "test_run",
+                "ide_test_case",
+                "ide_testcase",
+                "ide_test_case_add",
+                "test_case_add",
+            }:
+                source = str(payload.get("source", "")).strip().lower()
+                actor = "ai" if source == "ai" else "user"
+                status_desc = str(
+                    payload.get("statusDesc")
+                    or payload.get("status_desc")
+                    or payload.get("status")
+                    or "completed"
+                ).strip()
+                language = str(payload.get("language") or agent.current_ide_language or "").strip()
+                test_case_label = str(
+                    payload.get("testCase")
+                    or payload.get("test_case")
+                    or payload.get("label")
+                    or ""
+                ).strip()
+
+                summary = (
+                    (
+                        f"Ran tests ({test_case_label}): {status_desc}."
+                        if test_case_label
+                        else f"Ran tests: {status_desc}."
+                    )
+                    if payload_type in {"ide_test_run", "test_run"}
+                    else (
+                        f"Added/updated test case ({test_case_label})."
+                        if test_case_label
+                        else "Added/updated a test case."
+                    )
+                )
+
+                collector.add_code_history_event(
+                    actor=actor,
+                    event_type=("test_run" if payload_type in {"ide_test_run", "test_run"} else "test_case"),
+                    summary=summary,
+                    language=language or None,
+                    details={
+                        "source": source or actor,
+                        "status": status_desc,
+                        "time": payload.get("time") or payload.get("executionTime"),
+                        "memory": payload.get("memory"),
+                        "stdinPreview": str(payload.get("stdin") or payload.get("testCase") or "")[:180],
+                        "stdoutPreview": str(payload.get("stdoutPreview") or payload.get("stdout") or "")[:220],
+                        "stderrPreview": str(payload.get("stderrPreview") or payload.get("stderr") or "")[:220],
+                        "codeSnapshot": agent.current_ide_content,
+                    },
+                )
+
+                logger.info(
+                    "Captured coding test event (type=%s, source=%s, status=%s)",
+                    payload_type,
+                    source or "unknown",
+                    status_desc,
+                )
+            elif payload_type in {"finalize_interview", "interview_end"}:
                 trigger_report_generation("data_channel_finalize")
         except Exception as e:
             logger.error(f"Error parsing data channel message: {e}")

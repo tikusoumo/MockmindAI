@@ -12,10 +12,16 @@ class CreateRoomDto {
   @ApiProperty({ description: 'The unique name of the LiveKit room' })
   name: string;
 
-  @ApiProperty({ required: false, description: 'Seconds to wait before closing empty room' })
+  @ApiProperty({
+    required: false,
+    description: 'Seconds to wait before closing empty room',
+  })
   empty_timeout?: number;
 
-  @ApiProperty({ required: false, description: 'Maximum number of participants' })
+  @ApiProperty({
+    required: false,
+    description: 'Maximum number of participants',
+  })
   max_participants?: number;
 }
 
@@ -26,7 +32,10 @@ class CreateTokenDto {
   @ApiProperty({ description: 'The identity/name of the participant' })
   participant_name: string;
 
-  @ApiProperty({ required: false, description: 'Optional JSON stringified metadata' })
+  @ApiProperty({
+    required: false,
+    description: 'Optional JSON stringified metadata',
+  })
   metadata?: string;
 }
 
@@ -34,12 +43,17 @@ class StartRoomRecordingDto {
   @ApiProperty({ description: 'The LiveKit room name to record' })
   room_name: string;
 
-  @ApiProperty({ description: 'Session ID used to generate deterministic recording file name' })
+  @ApiProperty({
+    description:
+      'Session ID used to generate deterministic recording file name',
+  })
   session_id: string;
 }
 
 class StopRoomRecordingDto {
-  @ApiProperty({ description: 'LiveKit egress ID returned by start-room-recording endpoint' })
+  @ApiProperty({
+    description: 'LiveKit egress ID returned by start-room-recording endpoint',
+  })
   egress_id: string;
 }
 
@@ -120,7 +134,9 @@ export class LivekitController {
     }
   }
 
-  @ApiOperation({ summary: 'Start room-level interview recording (AI + candidate audio)' })
+  @ApiOperation({
+    summary: 'Start room-level interview recording (AI + candidate audio)',
+  })
   @Post('recordings/start')
   async startRoomRecording(@Body() body: StartRoomRecordingDto) {
     if (!this.livekitService.isConfigured) {
@@ -137,7 +153,9 @@ export class LivekitController {
       );
     } catch (error) {
       throw new HttpException(
-        error instanceof Error ? error.message : 'Failed to start room recording',
+        error instanceof Error
+          ? error.message
+          : 'Failed to start room recording',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
@@ -157,7 +175,9 @@ export class LivekitController {
       return await this.livekitService.stopRoomAudioRecording(body.egress_id);
     } catch (error) {
       throw new HttpException(
-        error instanceof Error ? error.message : 'Failed to stop room recording',
+        error instanceof Error
+          ? error.message
+          : 'Failed to stop room recording',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

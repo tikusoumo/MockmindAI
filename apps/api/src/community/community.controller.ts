@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { CommunityService } from './community.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -8,12 +19,17 @@ export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
   @Get('posts')
-  async getPosts(@Req() req: any, @Query('tab') tab?: string, @Query('search') search?: string, @Query('limit') limit?: string) {
+  async getPosts(
+    @Req() req: any,
+    @Query('tab') tab?: string,
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+  ) {
     return this.communityService.getPosts(
-      req.user.userId, 
-      tab || 'feed', 
-      search, 
-      limit ? parseInt(limit, 10) : 20
+      req.user.userId,
+      tab || 'feed',
+      search,
+      limit ? parseInt(limit, 10) : 20,
     );
   }
 
@@ -23,8 +39,17 @@ export class CommunityController {
   }
 
   @Patch('posts/:id')
-  async updatePost(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.communityService.updatePost(req.user.userId, req.user.role, id, body);
+  async updatePost(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.communityService.updatePost(
+      req.user.userId,
+      req.user.role,
+      id,
+      body,
+    );
   }
 
   @Delete('posts/:id')
@@ -43,17 +68,29 @@ export class CommunityController {
   }
 
   @Post('posts/:id/comments')
-  async createComment(@Req() req: any, @Param('id') id: string, @Body() body: { content: string }) {
-    return this.communityService.createComment(req.user.userId, id, body.content);
+  async createComment(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { content: string },
+  ) {
+    return this.communityService.createComment(
+      req.user.userId,
+      id,
+      body.content,
+    );
   }
 
   @Delete('comments/:id')
   async deleteComment(@Req() req: any, @Param('id') id: string) {
-    return this.communityService.deleteComment(req.user.userId, req.user.role, parseInt(id, 10));
+    return this.communityService.deleteComment(
+      req.user.userId,
+      req.user.role,
+      parseInt(id, 10),
+    );
   }
 
   // --- Templates ---
-  
+
   @Get('templates')
   async getCommunityTemplates() {
     return this.communityService.getCommunityTemplates();

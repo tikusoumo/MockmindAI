@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense, useRef } from "react";
+import { useState, useEffect, useCallback, Suspense, useRef, useMemo } from "react";
 import { 
   Mic, 
   MicOff, 
@@ -29,7 +29,11 @@ import {
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { InterviewTemplate } from "@/data/mockData";
-import { CodeEditor } from "@/components/interview/CodeEditor";
+import {
+  CodeEditor,
+  type CodeExecutionEvent,
+  type RemoteExecutionRequest,
+} from "@/components/interview/CodeEditor";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
@@ -55,6 +59,49 @@ import {
 } from "@livekit/components-react";
 import { RoomEvent, Track } from "livekit-client";
 import '@livekit/components-styles';
+
+const DEFAULT_HISTORY_SNAPSHOT_INTERVAL_SECONDS = 30;
+const MIN_HISTORY_SNAPSHOT_INTERVAL_SECONDS = 5;
+const MAX_HISTORY_SNAPSHOT_INTERVAL_SECONDS = 300;
+
+function parseHistorySnapshotInterval(raw: unknown): number | null {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+
+  const parsed = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  const rounded = Math.round(parsed);
+  return Math.max(
+    MIN_HISTORY_SNAPSHOT_INTERVAL_SECONDS,
+    Math.min(MAX_HISTORY_SNAPSHOT_INTERVAL_SECONDS, rounded),
+  );
+}
+
+function parseSystemPromptSettings(
+  rawSystemPrompt: unknown,
+): { historySnapshotIntervalSec?: number } {
+  if (typeof rawSystemPrompt !== "string" || !rawSystemPrompt.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(rawSystemPrompt);
+    if (parsed && typeof parsed === "object") {
+      const interval = parseHistorySnapshotInterval(
+        (parsed as Record<string, unknown>).historySnapshotIntervalSec,
+      );
+      return interval === null ? {} : { historySnapshotIntervalSec: interval };
+    }
+  } catch {
+    // Non-JSON system prompts are valid; ignore parse failures.
+  }
+
+  return {};
+}
 
 export default function InterviewPage() {
   return (
@@ -103,6 +150,35 @@ function InterviewPageContent() {
   const effectiveMode = sessionDbData?.aiBehavior || searchParams.get("mode") || "strict";
   const effectiveTitle = sessionDbData?.title || customTitle || "Interview";
   const effectiveDescription = sessionDbData?.focusAreas || customDescription || "Practice session";
+  const historySnapshotIntervalSec = useMemo(() => {
+    const queryInterval = parseHistorySnapshotInterval(searchParams.get("historyIntervalSec"));
+    if (queryInterval !== null) {
+      return queryInterval;
+    }
+
+    const directSessionInterval = parseHistorySnapshotInterval(
+      sessionDbData?.historySnapshotIntervalSec,
+    );
+    if (directSessionInterval !== null) {
+      return directSessionInterval;
+    }
+
+    const sessionPromptInterval = parseSystemPromptSettings(
+      sessionDbData?.systemPrompt,
+    ).historySnapshotIntervalSec;
+    if (typeof sessionPromptInterval === "number") {
+      return sessionPromptInterval;
+    }
+
+    const templatePromptInterval = parseSystemPromptSettings(
+      sessionDbData?.template?.systemPrompt,
+    ).historySnapshotIntervalSec;
+    if (typeof templatePromptInterval === "number") {
+      return templatePromptInterval;
+    }
+
+    return DEFAULT_HISTORY_SNAPSHOT_INTERVAL_SECONDS;
+  }, [searchParams, sessionDbData]);
 
   const dummyTemplate: InterviewTemplate = {
     id: templateId || "dummy",
@@ -142,6 +218,7 @@ function InterviewPageContent() {
             interviewType: resolvedInterviewType,
             customDescription: effectiveDescription,
             ideEnabled: isCodingRound,
+            historySnapshotIntervalSec,
             participantName: currentUser?.name || "Candidate",
             })        }).then((data) => {
            if (mounted) {
@@ -165,6 +242,7 @@ function InterviewPageContent() {
     effectiveType,
     effectiveSessionId,
     isCodingRound,
+    historySnapshotIntervalSec,
     persistedSessionId,
     resolvedInterviewType,
     sessionDbData,
@@ -185,7 +263,14 @@ function InterviewPageContent() {
   if (liveKitToken === "dummy") {
       return (
           <div className="flex flex-col gap-4 h-full w-full">
-            <InterviewSession currentUser={currentUser} template={dummyTemplate} isDummyMode={true} sessionDbData={sessionDbData} sessionId={effectiveSessionId} />
+            <InterviewSession
+              currentUser={currentUser}
+              template={dummyTemplate}
+              isDummyMode={true}
+              sessionDbData={sessionDbData}
+              sessionId={effectiveSessionId}
+              historySnapshotIntervalSec={historySnapshotIntervalSec}
+            />
           </div>
       );
   }
@@ -199,13 +284,34 @@ function InterviewPageContent() {
       audio={true}
       className="flex flex-col gap-4 h-full w-full"
     >
-      <InterviewSession currentUser={currentUser} template={dummyTemplate} isDummyMode={false} sessionDbData={sessionDbData} sessionId={effectiveSessionId} />
+      <InterviewSession
+        currentUser={currentUser}
+        template={dummyTemplate}
+        isDummyMode={false}
+        sessionDbData={sessionDbData}
+        sessionId={effectiveSessionId}
+        historySnapshotIntervalSec={historySnapshotIntervalSec}
+      />
       <RoomAudioRenderer />
     </LiveKitRoom>
   );
 }
 
-function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, sessionId }: { currentUser: User; template?: InterviewTemplate; isDummyMode: boolean; sessionDbData?: any; sessionId?: string; }) {
+function InterviewSession({
+  currentUser,
+  template,
+  isDummyMode,
+  sessionDbData,
+  sessionId,
+  historySnapshotIntervalSec,
+}: {
+  currentUser: User;
+  template?: InterviewTemplate;
+  isDummyMode: boolean;
+  sessionDbData?: any;
+  sessionId?: string;
+  historySnapshotIntervalSec?: number;
+}) {
   const router = useRouter();
   const reportLookupId = sessionId || template?.id || "latest";
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -229,11 +335,17 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
     code: "// Write your solution here...\n\nfunction solution() {\n  \n}",
     language: "javascript",
   });
+  const [executionRequest, setExecutionRequest] = useState<RemoteExecutionRequest | null>(null);
   const [assistantIdeNotice, setAssistantIdeNotice] = useState<string>("");
   const codeRef = useRef(code);
   const assistantTypingFrameRef = useRef<number | null>(null);
   const assistantNoticeTimerRef = useRef<number | null>(null);
   const suppressIdePublishUntilRef = useRef<number>(0);
+  const pendingCodeSnapshotRef = useRef<{ code: string; language: string } | null>(null);
+  const lastPublishedCodeSnapshotRef = useRef<{ code: string; language: string } | null>(null);
+  const effectiveHistorySnapshotIntervalSec =
+    parseHistorySnapshotInterval(historySnapshotIntervalSec) ??
+    DEFAULT_HISTORY_SNAPSHOT_INTERVAL_SECONDS;
 
   useEffect(() => {
     codeRef.current = code;
@@ -290,6 +402,12 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
           code: finalCode,
           language: nextLanguage || "javascript",
         });
+        // Assistant-applied edits should not be attributed as candidate snapshots.
+        pendingCodeSnapshotRef.current = null;
+        lastPublishedCodeSnapshotRef.current = {
+          code: finalCode,
+          language: nextLanguage || "javascript",
+        };
         setIsIdeCollapsed(false);
       };
 
@@ -484,6 +602,22 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
      if (lkParticipant) lkParticipant.setScreenShareEnabled(!isScreenShareEnabled, { audio: false }).catch(console.error);
   }, [lkParticipant, isScreenShareEnabled]);
 
+  const publishIdeEventData = useCallback(
+    (payload: Record<string, unknown>) => {
+      if (isDummyMode || !lkParticipant) {
+        return;
+      }
+
+      const encoder = new TextEncoder();
+      lkParticipant
+        .publishData(encoder.encode(JSON.stringify(payload)), { reliable: true })
+        .catch((error) => {
+          console.error("Failed to publish IDE collaboration event", error);
+        });
+    },
+    [isDummyMode, lkParticipant],
+  );
+
   const signalInterviewEndToAgent = useCallback(() => {
     if (isDummyMode || !lkParticipant) {
       return;
@@ -495,43 +629,26 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
       timestamp: Date.now(),
     };
 
-    const encoder = new TextEncoder();
-    lkParticipant
-      .publishData(encoder.encode(JSON.stringify(payload)), { reliable: true })
-      .catch((error) => {
-        console.error("Failed to publish interview-end signal to agent", error);
-      });
-  }, [isDummyMode, lkParticipant, reportLookupId]);
+    publishIdeEventData(payload);
+  }, [isDummyMode, lkParticipant, publishIdeEventData, reportLookupId]);
 
   useEffect(() => {
     if (isDummyMode || !isCodingRound || !lkParticipant) {
       return;
     }
 
-    if (Date.now() < suppressIdePublishUntilRef.current) {
-      return;
-    }
+    const lastPublished = lastPublishedCodeSnapshotRef.current;
+    const hasChangedSinceLastPublish =
+      !lastPublished ||
+      lastPublished.code !== latestCodeSnapshot.code ||
+      lastPublished.language !== latestCodeSnapshot.language;
 
-    const timer = window.setTimeout(() => {
-      const payload = {
-        type: "ide_change",
+    if (hasChangedSinceLastPublish) {
+      pendingCodeSnapshotRef.current = {
         code: latestCodeSnapshot.code,
         language: latestCodeSnapshot.language,
-        source: "candidate",
-        timestamp: Date.now(),
       };
-
-      const encoder = new TextEncoder();
-      lkParticipant
-        .publishData(encoder.encode(JSON.stringify(payload)), { reliable: true })
-        .catch((error) => {
-          console.error("Failed to publish IDE snapshot to agent", error);
-        });
-    }, 500);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
+    }
   }, [
     isDummyMode,
     isCodingRound,
@@ -539,6 +656,91 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
     latestCodeSnapshot.language,
     lkParticipant,
   ]);
+
+  useEffect(() => {
+    if (isDummyMode || !isCodingRound || !lkParticipant) {
+      return;
+    }
+
+    const publishPendingSnapshot = () => {
+      if (Date.now() < suppressIdePublishUntilRef.current) {
+        return;
+      }
+
+      const pendingSnapshot = pendingCodeSnapshotRef.current;
+      if (!pendingSnapshot) {
+        return;
+      }
+
+      publishIdeEventData({
+        type: "ide_change",
+        code: pendingSnapshot.code,
+        language: pendingSnapshot.language,
+        source: "candidate",
+        timestamp: Date.now(),
+        intervalSec: effectiveHistorySnapshotIntervalSec,
+      });
+
+      lastPublishedCodeSnapshotRef.current = pendingSnapshot;
+      pendingCodeSnapshotRef.current = null;
+    };
+
+    const initialTimer = window.setTimeout(publishPendingSnapshot, 800);
+    const interval = window.setInterval(
+      publishPendingSnapshot,
+      effectiveHistorySnapshotIntervalSec * 1000,
+    );
+
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(interval);
+    };
+  }, [
+    effectiveHistorySnapshotIntervalSec,
+    isCodingRound,
+    isDummyMode,
+    lkParticipant,
+    publishIdeEventData,
+  ]);
+
+  const handleCodeExecutionEvent = useCallback(
+    (event: CodeExecutionEvent) => {
+      if (isDummyMode || !isCodingRound) {
+        return;
+      }
+
+      const source = event.source === "ai" ? "ai" : "candidate";
+
+      if (event.testCaseLabel) {
+        publishIdeEventData({
+          type: "ide_test_case",
+          source,
+          language: event.language,
+          testCase: event.testCaseLabel,
+          stdin: event.stdin,
+          timestamp: event.timestamp || Date.now(),
+        });
+      }
+
+      publishIdeEventData({
+        type: "ide_test_run",
+        source,
+        status: event.status,
+        statusDesc: event.statusDesc,
+        language: event.language,
+        time: event.time,
+        memory: event.memory,
+        stdin: event.stdin,
+        testCase: event.testCaseLabel,
+        stdoutPreview: event.stdoutPreview,
+        stderrPreview: event.stderrPreview,
+        compileOutputPreview: event.compileOutputPreview,
+        codeSize: event.codeSize,
+        timestamp: event.timestamp || Date.now(),
+      });
+    },
+    [isCodingRound, isDummyMode, publishIdeEventData],
+  );
 
   useEffect(() => {
     if (isDummyMode || !isCodingRound || !livekitRoom) {
@@ -581,6 +783,55 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
             language: payload.language || "",
           });
           applyAssistantCodeUpdate(payload);
+          return;
+        }
+
+        if (payload.type === "ide_execute_request") {
+          const requestIdRaw = payload.requestId || payload.request_id;
+          const requestId =
+            typeof requestIdRaw === "string" && requestIdRaw.trim()
+              ? requestIdRaw
+              : `ide-exec-${Date.now()}`;
+
+          const incomingTestCases = Array.isArray(payload.testCases)
+            ? payload.testCases
+            : Array.isArray(payload.test_cases)
+              ? payload.test_cases
+              : undefined;
+
+          setExecutionRequest({
+            id: requestId,
+            source: "ai",
+            stdin: typeof payload.stdin === "string" ? payload.stdin : undefined,
+            testCases: incomingTestCases,
+          });
+
+          const note =
+            typeof payload.note === "string"
+              ? payload.note.trim()
+              : typeof payload.explanation === "string"
+                ? payload.explanation.trim()
+                : "";
+
+          if (note) {
+            const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            setChatMessages((prev) => [
+              ...prev,
+              {
+                name: `${sessionDbData?.persona || "AI"}`,
+                text: `[IDE] ${note}`,
+                time,
+              },
+            ]);
+          }
+
+          setAssistantIdeNotice("AI requested test execution.");
+          if (assistantNoticeTimerRef.current !== null) {
+            window.clearTimeout(assistantNoticeTimerRef.current);
+          }
+          assistantNoticeTimerRef.current = window.setTimeout(() => {
+            setAssistantIdeNotice("");
+          }, 2200);
         }
       } catch (error) {
         console.error("Failed to parse IDE collaboration event", error);
@@ -591,7 +842,7 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
     return () => {
       livekitRoom.off(RoomEvent.DataReceived, onDataReceived);
     };
-  }, [applyAssistantCodeUpdate, isCodingRound, isDummyMode, livekitRoom]);
+  }, [applyAssistantCodeUpdate, isCodingRound, isDummyMode, livekitRoom, sessionDbData?.persona]);
 
   // Fullscreen effect listener for IDE
   useEffect(() => {
@@ -1102,6 +1353,9 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
                                 <div className="flex items-center gap-3">
                                     <Badge variant="outline" className="font-mono text-[10px] bg-indigo-500/10 text-indigo-500 border-indigo-500/20">Machine Coding</Badge>
                                     <span className="text-sm font-semibold text-foreground/80">Active Editor</span>
+                                    <span className="text-[10px] text-muted-foreground">
+                                      History every {effectiveHistorySnapshotIntervalSec}s
+                                    </span>
                                     {assistantIdeNotice ? (
                                       <span className="text-[10px] uppercase tracking-wide text-indigo-500">{assistantIdeNotice}</span>
                                     ) : null}
@@ -1123,6 +1377,13 @@ function InterviewSession({ currentUser, template, isDummyMode, sessionDbData, s
                                     }}
                                     onCodeSnapshot={(nextCode, language) => {
                                       setLatestCodeSnapshot({ code: nextCode || "", language: language || "javascript" });
+                                    }}
+                                    onExecution={handleCodeExecutionEvent}
+                                    executionRequest={executionRequest}
+                                    onExecutionRequestComplete={(requestId) => {
+                                      setExecutionRequest((current) =>
+                                        current?.id === requestId ? null : current,
+                                      );
                                     }}
                                     defaultLanguage="javascript" 
                                 />

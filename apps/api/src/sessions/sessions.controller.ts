@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Put, Body, Param, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Body,
+  Param,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { SessionsService } from './sessions.service';
 import { AuthGuard } from '@nestjs/passport';
 
@@ -13,7 +22,7 @@ export class SessionsController {
     const userId = req.user.userId || req.user.sub || req.user.id;
     // ensure email is tracked for participant mapping
     createSessionDto.participantEmail = req.user.email;
-    return this.sessionsService.createSession(userId, createSessionDto);        
+    return this.sessionsService.createSession(userId, createSessionDto);
   }
 
   @Get()
@@ -30,15 +39,29 @@ export class SessionsController {
   }
 
   @Put(':id')
-  update(@Req() req, @Param('id') id: string, @Body() updateSessionDto: any) {  
+  update(@Req() req, @Param('id') id: string, @Body() updateSessionDto: any) {
     const userId = req.user.userId || req.user.sub || req.user.id;
     const userEmail = req.user.email || '';
-    return this.sessionsService.updateSession(id, userId, userEmail, updateSessionDto);
+    return this.sessionsService.updateSession(
+      id,
+      userId,
+      userEmail,
+      updateSessionDto,
+    );
   }
 
   @Post(':id/invite')
-  inviteMultiple(@Req() req, @Param('id') id: string, @Body() data: { emails: string[], accessType?: string }) {
+  inviteMultiple(
+    @Req() req,
+    @Param('id') id: string,
+    @Body() data: { emails: string[]; accessType?: string },
+  ) {
     const userId = req.user.userId || req.user.sub || req.user.id;
-    return this.sessionsService.inviteToSession(id, userId, data.emails, data.accessType);
+    return this.sessionsService.inviteToSession(
+      id,
+      userId,
+      data.emails,
+      data.accessType,
+    );
   }
 }

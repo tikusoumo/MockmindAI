@@ -31,6 +31,8 @@ export interface InterviewTemplate {
   documents?: TemplateDocument[];
   mode?: InterviewMode;
   persona?: string;
+  historySnapshotIntervalSec?: number;
+  systemPrompt?: string;
 }
 
 export interface ProgressStat {
@@ -64,6 +66,24 @@ export interface TranscriptEntry {
   timestamp: string;
 }
 
+export interface CodeHistoryEntry {
+  id: string;
+  actor: 'ai' | 'user' | 'system' | string;
+  eventType: 'code_change' | 'code_apply' | 'test_run' | 'test_case' | string;
+  summary: string;
+  timestamp: string;
+  language?: string;
+  code?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface ReportAudioTrack {
+  id: string;
+  label: string;
+  speaker: string;
+  audioUrl?: string;
+}
+
 export interface ReportData {
   id: string;
   date: string;
@@ -95,6 +115,8 @@ export interface ReportData {
     url: string;
   }[];
   recordingAudioUrl?: string;
+  codeHistory?: CodeHistoryEntry[];
+  audioTracks?: ReportAudioTrack[];
 }
 
 export interface CommunityPost {
@@ -340,6 +362,50 @@ export const mockReport: ReportData = {
       title: "Effective Communication for Engineers",
       type: "Course",
       url: "#",
+    },
+  ],
+  codeHistory: [
+    {
+      id: "SNAP-0001",
+      actor: "user",
+      eventType: "code_change",
+      summary: "Started implementing two-sum with a hash map.",
+      timestamp: "00:07",
+      language: "javascript",
+      code: "function twoSum(nums, target) {\n  const seen = new Map();\n  for (let i = 0; i < nums.length; i += 1) {\n    const need = target - nums[i];\n    if (seen.has(need)) return [seen.get(need), i];\n    seen.set(nums[i], i);\n  }\n  return [];\n}",
+    },
+    {
+      id: "SNAP-0002",
+      actor: "ai",
+      eventType: "code_apply",
+      summary: "Suggested guard clause for empty input.",
+      timestamp: "00:25",
+      language: "javascript",
+      code: "function twoSum(nums, target) {\n  if (!Array.isArray(nums) || nums.length === 0) return [];\n  const seen = new Map();\n  for (let i = 0; i < nums.length; i += 1) {\n    const need = target - nums[i];\n    if (seen.has(need)) return [seen.get(need), i];\n    seen.set(nums[i], i);\n  }\n  return [];\n}",
+    },
+    {
+      id: "SNAP-0003",
+      actor: "user",
+      eventType: "test_run",
+      summary: "Ran tests: Accepted.",
+      timestamp: "00:39",
+      language: "javascript",
+      code: "function twoSum(nums, target) {\n  if (!Array.isArray(nums) || nums.length === 0) return [];\n  const seen = new Map();\n  for (let i = 0; i < nums.length; i += 1) {\n    const need = target - nums[i];\n    if (seen.has(need)) return [seen.get(need), i];\n    seen.set(nums[i], i);\n  }\n  return [];\n}",
+      details: { status: "Accepted", stdinPreview: "[2,7,11,15]\n9" },
+    },
+  ],
+  audioTracks: [
+    {
+      id: "candidate-audio",
+      label: "Candidate Audio",
+      speaker: "You",
+      audioUrl: "/mock-audio-1.mp3",
+    },
+    {
+      id: "ai-audio",
+      label: "AI/Interviewer Audio",
+      speaker: "Interviewer",
+      audioUrl: "/mock-audio-2.mp3",
     },
   ],
 };

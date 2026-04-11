@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
 export default function SchedulePage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
   
@@ -38,9 +40,9 @@ export default function SchedulePage() {
       const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
       
       const [sessionsRes, routinesRes, googleRes] = await Promise.all([
-        fetch('/api/schedule', { headers }),
-        fetch('/api/schedule/routines', { headers }),
-        fetch('/api/schedule/google/status', { headers })
+        fetch(`${API_BASE}/api/schedule`, { headers }),
+        fetch(`${API_BASE}/api/schedule/routines`, { headers }),
+        fetch(`${API_BASE}/api/schedule/google/status`, { headers })
       ]);
 
       if (sessionsRes.ok) setSessions(await sessionsRes.json());
@@ -70,7 +72,7 @@ export default function SchedulePage() {
       const [hours, minutes] = newTime.split(':');
       sessionDate.setHours(parseInt(hours), parseInt(minutes), 0);
 
-      const res = await fetch('/api/schedule', {
+      const res = await fetch(`${API_BASE}/api/schedule`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -97,7 +99,7 @@ export default function SchedulePage() {
   const handleDeleteSession = async (id: string) => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/schedule/${id}`, {
+      const res = await fetch(`${API_BASE}/api/schedule/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -113,7 +115,7 @@ export default function SchedulePage() {
   const handleGenerateRoutine = async () => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/schedule/routines/generate', {
+      const res = await fetch(`${API_BASE}/api/schedule/routines/generate`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -136,13 +138,13 @@ export default function SchedulePage() {
     try {
       const token = localStorage.getItem('token');
       if (googleConnected) {
-        await fetch('/api/schedule/google/disconnect', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+        await fetch(`${API_BASE}/api/schedule/google/disconnect`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
         setGoogleConnected(false);
         toast("Google Calendar sync paused.");
       } else {
         // In real app, this redirects to OAuth flow. 
         // For demo, we just simulate connecting.
-        await fetch('/api/schedule/google/connect', { 
+        await fetch(`${API_BASE}/api/schedule/google/connect`, { 
           method: 'POST', 
           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: { dummy: "token" } })
@@ -203,11 +205,11 @@ export default function SchedulePage() {
                 <div className="grid gap-2">
                   <Label>Category</Label>
                   <Select value={newCategory} onValueChange={setNewCategory}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="practice">Practice</SelectItem>
-                      <SelectItem value="mock">Mock Interview</SelectItem>
-                      <SelectItem value="review">Review</SelectItem>
+                      <SelectItem value="practice" className="w-full">Practice</SelectItem>
+                      <SelectItem value="mock" className="w-full">Mock Interview</SelectItem>
+                      <SelectItem value="review" className="w-full">Review</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -234,33 +236,7 @@ export default function SchedulePage() {
                 mode="single"
                 selected={date}
                 onSelect={setDate}
-                className="rounded-md border shadow-sm w-full"
-                classNames={{
-                  months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0 w-full",
-                  month: "space-y-4 w-full",
-                  table: "w-full border-collapse space-y-1",
-                  head_row: "flex w-full justify-between",
-                  row: "flex w-full justify-between mt-2",
-                  cell: "h-12 w-full text-center text-sm p-0 flex items-center justify-center relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-accent/50 [&:has([aria-selected])]:bg-accent first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
-                  day: "h-10 w-10 p-0 font-normal aria-selected:opacity-100 mx-auto",
-                }}
-                components={{
-                  DayContent: (props) => {
-                    const sessionOnDay = sessions.find(s => {
-                      const sd = new Date(s.date);
-                      return sd.getDate() === props.date.getDate() && sd.getMonth() === props.date.getMonth();
-                    });
-                    
-                    return (
-                      <div className="relative flex items-center justify-center h-full w-full">
-                        {props.date.getDate()}
-                        {sessionOnDay && (
-                          <div className="absolute bottom-[-2px] left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-primary rounded-full" />
-                        )}
-                      </div>
-                    )
-                  }
-                }}
+                className="rounded-md border shadow-sm mx-auto p-4 flex justify-center w-full max-w-[320px]"
               />
             </CardContent>
           </Card>

@@ -234,6 +234,50 @@ export const fallbackReport: ReportData = {
     { title: "System Design Interview Guide", type: "Video", url: "#" },
     { title: "Effective Communication for Engineers", type: "Course", url: "#" },
   ],
+  codeHistory: [
+    {
+      id: "SNAP-0001",
+      actor: "user",
+      eventType: "code_change",
+      summary: "Implemented core hash-map solution in editor.",
+      timestamp: "00:08",
+      language: "javascript",
+      code: "function twoSum(nums, target) {\n  const seen = new Map();\n  for (let i = 0; i < nums.length; i += 1) {\n    const need = target - nums[i];\n    if (seen.has(need)) return [seen.get(need), i];\n    seen.set(nums[i], i);\n  }\n  return [];\n}",
+    },
+    {
+      id: "SNAP-0002",
+      actor: "ai",
+      eventType: "code_apply",
+      summary: "Applied a small optimization for constant-time lookup checks.",
+      timestamp: "00:24",
+      language: "javascript",
+      code: "function twoSum(nums, target) {\n  if (!Array.isArray(nums) || nums.length === 0) return [];\n  const seen = new Map();\n  for (let i = 0; i < nums.length; i += 1) {\n    const need = target - nums[i];\n    if (seen.has(need)) return [seen.get(need), i];\n    seen.set(nums[i], i);\n  }\n  return [];\n}",
+    },
+    {
+      id: "SNAP-0003",
+      actor: "user",
+      eventType: "test_run",
+      summary: "Ran tests: Accepted.",
+      timestamp: "00:41",
+      language: "javascript",
+      code: "function twoSum(nums, target) {\n  if (!Array.isArray(nums) || nums.length === 0) return [];\n  const seen = new Map();\n  for (let i = 0; i < nums.length; i += 1) {\n    const need = target - nums[i];\n    if (seen.has(need)) return [seen.get(need), i];\n    seen.set(nums[i], i);\n  }\n  return [];\n}",
+      details: { status: "Accepted", stdinPreview: "[2,7,11,15]\\n9" },
+    },
+  ],
+  audioTracks: [
+    {
+      id: "candidate-audio",
+      label: "Candidate Audio",
+      speaker: "You",
+      audioUrl: "/mock-audio-1.mp3",
+    },
+    {
+      id: "ai-audio",
+      label: "AI/Interviewer Audio",
+      speaker: "Interviewer",
+      audioUrl: "/mock-audio-2.mp3",
+    },
+  ],
 };
 
 export const fallbackCommunityPosts: CommunityPost[] = [

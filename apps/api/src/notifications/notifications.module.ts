@@ -6,7 +6,9 @@ import { NotificationsGateway } from './notifications.gateway';
 import { PrismaService } from '../prisma.service';
 
 @Module({
-  imports: [JwtModule.register({ secret: process.env.JWT_SECRET || 'fallback-secret' })],
+  imports: [
+    JwtModule.register({ secret: process.env.JWT_SECRET || 'fallback-secret' }),
+  ],
   controllers: [NotificationsController],
   providers: [NotificationsService, NotificationsGateway, PrismaService],
   exports: [NotificationsService],

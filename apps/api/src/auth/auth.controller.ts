@@ -1,4 +1,13 @@
-import { Controller, Post, Delete, Get, Body, Req, UseGuards, Res } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Delete,
+  Get,
+  Body,
+  Req,
+  UseGuards,
+  Res,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -19,7 +28,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Sign up new user with OTP, email, password' })
   @Post('signup')
   async signup(@Body() body: any) {
-    return this.authService.verifyOtpAndLogin(body.email, body.code, body.name, body.password);
+    return this.authService.verifyOtpAndLogin(
+      body.email,
+      body.code,
+      body.name,
+      body.password,
+    );
   }
 
   @ApiOperation({ summary: 'Send OTP to an email address' })
@@ -30,8 +44,21 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Verify an OTP code' })
   @Post('verify-otp')
-  async verifyOtp(@Body() body: { email: string; code: string; name?: string; password?: string }) {
-    return this.authService.verifyOtpAndLogin(body.email, body.code, body.name, body.password);
+  async verifyOtp(
+    @Body()
+    body: {
+      email: string;
+      code: string;
+      name?: string;
+      password?: string;
+    },
+  ) {
+    return this.authService.verifyOtpAndLogin(
+      body.email,
+      body.code,
+      body.name,
+      body.password,
+    );
   }
 
   @ApiOperation({ summary: 'Change authenticated user password' })
@@ -41,7 +68,11 @@ export class AuthController {
     @Req() req: any,
     @Body() body: { currentPassword: string; newPassword: string },
   ) {
-    return this.authService.changePassword(req.user.userId, body.currentPassword, body.newPassword);
+    return this.authService.changePassword(
+      req.user.userId,
+      body.currentPassword,
+      body.newPassword,
+    );
   }
 
   @ApiOperation({ summary: 'Initiate forgot password process with OTP' })

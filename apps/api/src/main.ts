@@ -9,16 +9,22 @@ async function bootstrap() {
   // Swagger Documentation Setup
   const config = new DocumentBuilder()
     .setTitle('AI Voice Agent Config API')
-    .setDescription('NestJS API for managing users, reports, and platform configurations.')
+    .setDescription(
+      'NestJS API for managing users, reports, and platform configurations.',
+    )
     .setVersion('1.0')
     .addBearerAuth()
     .build();
-  const documentFactory = () => SwaggerModule.createDocument(app as any, config);
+  const documentFactory = () =>
+    SwaggerModule.createDocument(app as any, config);
   SwaggerModule.setup('api/docs', app as any, documentFactory);
 
   // Enable CORS for frontend access
   app.enableCors({
-    origin: (process.env.CORS_ALLOW_ORIGINS || 'http://localhost:3000,http://localhost:3001')
+    origin: (
+      process.env.CORS_ALLOW_ORIGINS ||
+      'http://localhost:3000,http://localhost:3001'
+    )
       .split(',')
       .map((o) => o.trim())
       .filter(Boolean),

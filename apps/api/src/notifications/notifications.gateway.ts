@@ -16,7 +16,9 @@ import { JwtService } from '@nestjs/jwt';
     origin: '*',
   },
 })
-export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class NotificationsGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
@@ -24,7 +26,9 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
 
   async handleConnection(client: Socket) {
     try {
-      const token = client.handshake.auth.token?.split(' ')[1] || client.handshake.headers.authorization?.split(' ')[1];
+      const token =
+        client.handshake.auth.token?.split(' ')[1] ||
+        client.handshake.headers.authorization?.split(' ')[1];
       if (!token) {
         client.disconnect();
         return;

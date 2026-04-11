@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -9,7 +13,12 @@ export class CommunityService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async getPosts(userId: number, tab: string = 'feed', search?: string, limit: number = 20) {
+  async getPosts(
+    userId: number,
+    tab: string = 'feed',
+    search?: string,
+    limit: number = 20,
+  ) {
     const whereClause: any = {};
     if (search) {
       whereClause.OR = [
@@ -23,8 +32,8 @@ export class CommunityService {
       // Order by number of likes
       orderBy = {
         postLikes: {
-          _count: 'desc'
-        }
+          _count: 'desc',
+        },
       };
     }
 
@@ -34,28 +43,31 @@ export class CommunityService {
       take: limit,
       include: {
         author: {
-          select: { id: true, name: true, avatar: true, role: true }
+          select: { id: true, name: true, avatar: true, role: true },
         },
         _count: {
-          select: { comments: true, postLikes: true }
+          select: { comments: true, postLikes: true },
         },
         postLikes: {
-          where: { userId } // Check if current user liked it
-        }
-      }
+          where: { userId }, // Check if current user liked it
+        },
+      },
     });
 
-    return posts.map(post => ({
+    return posts.map((post) => ({
       ...post,
       isLikedByMe: post.postLikes.length > 0,
       likesCount: post._count.postLikes,
       commentsCount: post._count.comments,
       postLikes: undefined, // remove raw array from response
-      _count: undefined
+      _count: undefined,
     }));
   }
 
-  async createPost(userId: number, data: { title?: string, content: string, tags?: string[] }) {
+  async createPost(
+    userId: number,
+    data: { title?: string; content: string; tags?: string[] },
+  ) {
     return this.prisma.communityPost.create({
       data: {
         authorId: userId,
@@ -64,15 +76,20 @@ export class CommunityService {
         tags: data.tags || [],
       },
       include: {
-        author: { select: { id: true, name: true, avatar: true, role: true } }
-      }
+        author: { select: { id: true, name: true, avatar: true, role: true } },
+      },
     });
   }
 
-  async updatePost(userId: number, role: string, id: string, data: { title?: string, content?: string, tags?: string[] }) {
+  async updatePost(
+    userId: number,
+    role: string,
+    id: string,
+    data: { title?: string; content?: string; tags?: string[] },
+  ) {
     const post = await this.prisma.communityPost.findUnique({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
-    
+
     if (post.authorId !== userId && role !== 'superadmin') {
       throw new UnauthorizedException('You can only edit your own posts');
     }
@@ -83,14 +100,14 @@ export class CommunityService {
         title: data.title,
         content: data.content,
         tags: data.tags,
-      }
+      },
     });
   }
 
   async deletePost(userId: number, role: string, id: string) {
     const post = await this.prisma.communityPost.findUnique({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
-    
+
     if (post.authorId !== userId && role !== 'superadmin') {
       throw new UnauthorizedException('You can only delete your own posts');
     }
@@ -100,11 +117,13 @@ export class CommunityService {
   }
 
   async toggleLike(userId: number, postId: string) {
-    const post = await this.prisma.communityPost.findUnique({ where: { id: postId } });
+    const post = await this.prisma.communityPost.findUnique({
+      where: { id: postId },
+    });
     if (!post) throw new NotFoundException('Post not found');
 
     const existingLike = await this.prisma.postLike.findUnique({
-      where: { postId_userId: { postId, userId } }
+      where: { postId_userId: { postId, userId } },
     });
 
     if (existingLike) {
@@ -112,18 +131,20 @@ export class CommunityService {
       return { liked: false };
     } else {
       await this.prisma.postLike.create({
-        data: { postId, userId }
+        data: { postId, userId },
       });
 
       // Notify post author if someone else liked it
       if (post.authorId !== userId) {
-        const liker = await this.prisma.user.findUnique({ where: { id: userId } });
+        const liker = await this.prisma.user.findUnique({
+          where: { id: userId },
+        });
         await this.notifications.createNotification(
           post.authorId,
           'post_like',
           'New Like',
           `${liker?.name || 'Someone'} liked your post.`,
-          { postId }
+          { postId },
         );
       }
       return { liked: true };
@@ -137,13 +158,15 @@ export class CommunityService {
       where: { postId },
       orderBy: { createdAt: 'asc' },
       include: {
-        author: { select: { id: true, name: true, avatar: true, role: true } }
-      }
+        author: { select: { id: true, name: true, avatar: true, role: true } },
+      },
     });
   }
 
   async createComment(userId: number, postId: string, content: string) {
-    const post = await this.prisma.communityPost.findUnique({ where: { id: postId } });
+    const post = await this.prisma.communityPost.findUnique({
+      where: { id: postId },
+    });
     if (!post) throw new NotFoundException('Post not found');
 
     const comment = await this.prisma.communityComment.create({
@@ -153,19 +176,21 @@ export class CommunityService {
         content,
       },
       include: {
-        author: { select: { id: true, name: true, avatar: true, role: true } }
-      }
+        author: { select: { id: true, name: true, avatar: true, role: true } },
+      },
     });
 
     // Notify post author
     if (post.authorId !== userId) {
-      const commenter = await this.prisma.user.findUnique({ where: { id: userId } });
+      const commenter = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
       await this.notifications.createNotification(
         post.authorId,
         'post_reply',
         'New Comment',
         `${commenter?.name || 'Someone'} commented on your post.`,
-        { postId }
+        { postId },
       );
     }
 
@@ -173,7 +198,9 @@ export class CommunityService {
   }
 
   async deleteComment(userId: number, role: string, commentId: number) {
-    const comment = await this.prisma.communityComment.findUnique({ where: { id: commentId } });
+    const comment = await this.prisma.communityComment.findUnique({
+      where: { id: commentId },
+    });
     if (!comment) throw new NotFoundException('Comment not found');
 
     if (comment.authorId !== userId && role !== 'superadmin') {
@@ -185,25 +212,27 @@ export class CommunityService {
   }
 
   // --- Templates ---
-  
+
   async getCommunityTemplates() {
     return this.prisma.interviewTemplate.findMany({
       where: { isPublished: true },
       include: {
-        creator: { select: { name: true, avatar: true } }
+        creator: { select: { name: true, avatar: true } },
       },
-      orderBy: { rating: 'desc' }
+      orderBy: { rating: 'desc' },
     });
   }
 
   async useTemplate(userId: number, templateId: string) {
-    const template = await this.prisma.interviewTemplate.findUnique({ where: { id: templateId } });
+    const template = await this.prisma.interviewTemplate.findUnique({
+      where: { id: templateId },
+    });
     if (!template) throw new NotFoundException('Template not found');
 
-    // Increment usage 
+    // Increment usage
     await this.prisma.interviewTemplate.update({
       where: { id: templateId },
-      data: { usageCount: { increment: 1 } }
+      data: { usageCount: { increment: 1 } },
     });
 
     // Create a clone for the user
@@ -220,7 +249,7 @@ export class CommunityService {
         systemPrompt: template.systemPrompt,
         creatorId: userId,
         isPublished: false,
-      }
+      },
     });
   }
 }

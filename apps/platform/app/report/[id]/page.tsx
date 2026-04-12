@@ -12,8 +12,6 @@ import {
   ChevronDown,
   ChevronUp,
   ArrowLeft,
-  Play,
-  Pause,
   MessageSquare,
   Mic,
   Activity,
@@ -56,6 +54,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 type TranscriptDisplayEntry = {
   speaker: "You" | "Interviewer";
@@ -114,6 +119,55 @@ const COMMON_FILLER_WORDS = [
   "kind of",
   "sort of",
 ];
+
+const CORE_BEHAVIORAL_KEYS = new Set([
+  "eyeContact",
+  "fillerWords",
+  "pace",
+  "clarity",
+]);
+
+const BEHAVIORAL_LABELS: Record<string, string> = {
+  eyeContact: "Eye Contact",
+  fillerWords: "Filler Words",
+  pace: "Pace",
+  clarity: "Clarity",
+  sentiment: "Sentiment",
+  sentimentScore: "Sentiment Score",
+  tone: "Tone",
+  mood: "Mood",
+  pronunciationClarity: "Pronunciation Clarity",
+  hesitationCount: "Hesitation Count",
+  deliveryGuidance: "Delivery Guidance",
+};
+
+function formatBehavioralLabel(key: string): string {
+  return (
+    BEHAVIORAL_LABELS[key] ||
+    key
+      .replace(/_/g, " ")
+      .replace(/([A-Z])/g, " $1")
+      .trim()
+  );
+}
+
+function formatBehavioralValue(key: string, value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (key === "pronunciationClarity") {
+      return `${Math.round(value)}/100`;
+    }
+    if (key === "sentimentScore") {
+      return value.toFixed(2);
+    }
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
+  return String(value ?? "");
+}
 
 function parseTimestampToSeconds(value: string | number | undefined): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -343,7 +397,6 @@ export default function ReportDetailPage() {
   const [openQuestion, setOpenQuestion] = useState<number | null>(null);
   const [report, setReport] = useState<ReportData>(fallbackReport);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeAudioQuestionId, setActiveAudioQuestionId] = useState<number | null>(null);
   const [downloadingQuestionId, setDownloadingQuestionId] = useState<number | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isResolvingAudio, setIsResolvingAudio] = useState(false);
@@ -361,28 +414,12 @@ export default function ReportDetailPage() {
 
   const endpoint = id === 'latest' ? '/api/reports/latest' : `/api/reports/${id}`;
 
-  const toggleQuestionAudioPlayback = (questionId: number) => {
-    const targetAudio = audioElementRefs.current[questionId];
-    if (!targetAudio) {
-      return;
-    }
-
-    if (activeAudioQuestionId !== null && activeAudioQuestionId !== questionId) {
-      const previousAudio = audioElementRefs.current[activeAudioQuestionId];
-      if (previousAudio && !previousAudio.paused) {
-        previousAudio.pause();
+  const pauseOtherQuestionAudio = (questionId: number) => {
+    Object.entries(audioElementRefs.current).forEach(([key, audio]) => {
+      if (Number(key) !== questionId && audio && !audio.paused) {
+        audio.pause();
       }
-    }
-
-    if (targetAudio.paused) {
-      setAudioLoadErrorByQuestion((prev) => ({ ...prev, [questionId]: false }));
-      targetAudio.play().catch(() => {
-        setAudioLoadErrorByQuestion((prev) => ({ ...prev, [questionId]: true }));
-      });
-      return;
-    }
-
-    targetAudio.pause();
+    });
   };
 
   const downloadQuestionAudio = async (questionId: number, audioUrl: string) => {
@@ -449,7 +486,6 @@ export default function ReportDetailPage() {
   }, [endpoint]);
 
   useEffect(() => {
-    setActiveAudioQuestionId(null);
     setAudioLoadErrorByQuestion({});
     setAudioRecoveryExhausted(false);
     setCoachPrompt("");
@@ -639,7 +675,29 @@ export default function ReportDetailPage() {
     threats: Array.isArray(report.swot?.threats) ? report.swot.threats : [],
   };
 
-  const behavioralEntries = Object.entries(report.behavioralAnalysis || {});
+  const behavioralAnalysis =
+    report.behavioralAnalysis && typeof report.behavioralAnalysis === "object"
+      ? (report.behavioralAnalysis as Record<string, unknown>)
+      : {};
+  const coreBehavioralEntries = Object.entries(behavioralAnalysis).filter(
+    ([key, value]) =>
+      CORE_BEHAVIORAL_KEYS.has(key) &&
+      value !== undefined &&
+      value !== null &&
+      String(value).trim().length > 0,
+  );
+  const deliveryGuidance =
+    typeof behavioralAnalysis.deliveryGuidance === "string"
+      ? behavioralAnalysis.deliveryGuidance.trim()
+      : "";
+  const deliveryBehavioralEntries = Object.entries(behavioralAnalysis).filter(
+    ([key, value]) =>
+      !CORE_BEHAVIORAL_KEYS.has(key) &&
+      key !== "deliveryGuidance" &&
+      value !== undefined &&
+      value !== null &&
+      String(value).trim().length > 0,
+  );
   const resources = Array.isArray(report.resources) ? report.resources : [];
   const radarData = Array.isArray(report.radarData) ? report.radarData : [];
   const timelineData = Array.isArray(report.timelineData) ? report.timelineData : [];
@@ -1007,10 +1065,10 @@ export default function ReportDetailPage() {
           <Button
             variant="outline"
             className="flex"
-            onClick={() => setIsCoachPanelOpen((current) => !current)}
+            onClick={() => setIsCoachPanelOpen(true)}
           >
             <MessageSquare className="mr-2 h-4 w-4" />
-            {isCoachPanelOpen ? "Hide Coach" : "Ask Coach"}
+            Ask Coach
           </Button>
           <Button variant="outline" onClick={() => void handleShareReport()} disabled={isSharingReport}>
             <Share2 className="mr-2 h-4 w-4" /> {isSharingReport ? "Sharing..." : "Share"}
@@ -1021,17 +1079,18 @@ export default function ReportDetailPage() {
         </div>
       </div>
 
-      {isCoachPanelOpen ? (
-        <Card className="print:hidden">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
+      <Sheet open={isCoachPanelOpen} onOpenChange={setIsCoachPanelOpen}>
+        <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-xl">
+          <SheetHeader className="border-b px-6 py-5">
+            <SheetTitle className="flex items-center gap-2 text-lg">
               <MessageSquare className="h-5 w-5" /> Ask AI Coach
-            </CardTitle>
-            <CardDescription>
+            </SheetTitle>
+            <SheetDescription>
               Ask a report-specific question about your technical performance, test runs, or coding history.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-4 px-6 py-4">
             <div className="space-y-2">
               <Textarea
                 value={coachPrompt}
@@ -1086,9 +1145,9 @@ export default function ReportDetailPage() {
                 ) : null}
               </div>
             ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {isAwaitingFinalReport ? (
         <Card className="border-amber-500/30 bg-amber-500/5">
@@ -1229,7 +1288,6 @@ export default function ReportDetailPage() {
               const audioUrl = resolveMediaUrl(q.audioUrl) || sharedRecordingAudioUrl;
               const hasAudioLoadError = Boolean(audioLoadErrorByQuestion[q.id]);
               const canUseAudio = Boolean(audioUrl) && !hasAudioLoadError;
-              const isAudioPlaying = activeAudioQuestionId === q.id;
               const isDownloadingAudio = downloadingQuestionId === q.id;
               const improvements = Array.isArray(q.improvements) ? q.improvements : [];
 
@@ -1257,24 +1315,9 @@ export default function ReportDetailPage() {
                         {canUseAudio ? (
                           <div className="space-y-3 bg-muted/30 p-3 rounded-md border">
                             <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-8 w-8 rounded-full"
-                                  onClick={() => toggleQuestionAudioPlayback(q.id)}
-                                >
-                                  {isAudioPlaying ? (
-                                    <Pause className="h-3.5 w-3.5" />
-                                  ) : (
-                                    <Play className="h-3.5 w-3.5" />
-                                  )}
-                                </Button>
-                                <div className="space-y-0.5">
-                                  <div className="text-xs font-medium">Audio Recording</div>
-                                  <div className="text-[10px] text-muted-foreground">Playback and download are available.</div>
-                                </div>
+                              <div className="space-y-0.5">
+                                <div className="text-xs font-medium">Audio Recording</div>
+                                <div className="text-[10px] text-muted-foreground">Playback and download are available.</div>
                               </div>
                               <Button
                                 variant="ghost"
@@ -1299,12 +1342,12 @@ export default function ReportDetailPage() {
                               preload="none"
                               src={audioUrl}
                               className="w-full"
-                              onPlay={() => setActiveAudioQuestionId(q.id)}
-                              onPause={() => setActiveAudioQuestionId((current) => (current === q.id ? null : current))}
-                              onEnded={() => setActiveAudioQuestionId((current) => (current === q.id ? null : current))}
+                              onPlay={() => {
+                                pauseOtherQuestionAudio(q.id);
+                                setAudioLoadErrorByQuestion((prev) => ({ ...prev, [q.id]: false }));
+                              }}
                               onError={() => {
                                 setAudioLoadErrorByQuestion((prev) => ({ ...prev, [q.id]: true }));
-                                setActiveAudioQuestionId((current) => (current === q.id ? null : current));
                               }}
                             />
                           </div>
@@ -1370,7 +1413,7 @@ export default function ReportDetailPage() {
             <CardContent>
               {codeHistory.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                  No coding history was captured for this report.
+                  Code history is not available for this report yet.
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -1677,7 +1720,9 @@ export default function ReportDetailPage() {
         </TabsContent>
 
         <TabsContent value="behavioral" className="space-y-4">
-          {behavioralEntries.length === 0 ? (
+          {coreBehavioralEntries.length === 0 &&
+          deliveryBehavioralEntries.length === 0 &&
+          !deliveryGuidance ? (
             <Card>
               <CardHeader>
                 <CardTitle>Behavioral Analysis Unavailable</CardTitle>
@@ -1685,19 +1730,75 @@ export default function ReportDetailPage() {
               </CardHeader>
             </Card>
           ) : (
-            <div className="grid gap-4 md:grid-cols-4">
-              {behavioralEntries.map(([key, value]) => (
-                <Card key={key}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium capitalize text-muted-foreground">
-                      {key.replace(/([A-Z])/g, ' $1').trim()}
-                    </CardTitle>
+            <div className="space-y-4">
+              {coreBehavioralEntries.length > 0 ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Core Behavioral Signals</CardTitle>
+                    <CardDescription>
+                      Eye contact, pacing, clarity, and filler-word behavior.
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold">{String(value)}</div>
+                    <div className="grid gap-4 md:grid-cols-4">
+                      {coreBehavioralEntries.map(([key, value]) => (
+                        <Card key={key}>
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-medium text-muted-foreground">
+                              {formatBehavioralLabel(key)}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="text-2xl font-bold">
+                              {formatBehavioralValue(key, value)}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
                   </CardContent>
                 </Card>
-              ))}
+              ) : null}
+
+              {deliveryBehavioralEntries.length > 0 || deliveryGuidance ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Delivery & Sentiment Insights</CardTitle>
+                    <CardDescription>
+                      Tone, mood, sentiment score, pronunciation clarity, and hesitation markers.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {deliveryBehavioralEntries.length > 0 ? (
+                      <div className="grid gap-4 md:grid-cols-3">
+                        {deliveryBehavioralEntries.map(([key, value]) => (
+                          <Card key={key}>
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm font-medium text-muted-foreground">
+                                {formatBehavioralLabel(key)}
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="text-2xl font-bold">
+                                {formatBehavioralValue(key, value)}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {deliveryGuidance ? (
+                      <div className="rounded-md border bg-primary/5 p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Coaching Guidance
+                        </p>
+                        <p className="mt-2 text-sm leading-6">{deliveryGuidance}</p>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              ) : null}
             </div>
           )}
         </TabsContent>

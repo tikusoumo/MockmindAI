@@ -329,10 +329,10 @@ function InterviewSession({
     normalizedEffectiveType === "technical" ||
     template?.id === "machine-coding-round" ||
     template?.id === "tech-round";
-  const [code, setCode] = useState("// Write your solution here...\n\nfunction solution() {\n  \n}");
+  const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("javascript");
   const [latestCodeSnapshot, setLatestCodeSnapshot] = useState<{ code: string; language: string }>({
-    code: "// Write your solution here...\n\nfunction solution() {\n  \n}",
+    code: "",
     language: "javascript",
   });
   const [executionRequest, setExecutionRequest] = useState<RemoteExecutionRequest | null>(null);

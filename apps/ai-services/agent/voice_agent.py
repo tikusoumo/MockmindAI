@@ -13,28 +13,18 @@ Features:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-import io
 import json
 import logging
-import os
-import re
-import threading
 import time
 import urllib.request
 import uuid
-import wave
 from typing import Any, Awaitable, Callable
 
 from dotenv import load_dotenv
-import httpx
 from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
-    APIConnectOptions,
-    DEFAULT_API_CONNECT_OPTIONS,
     JobContext,
     JobProcess,
     cli,
@@ -42,433 +32,35 @@ from livekit.agents import (
     RunContext,
 )
 from livekit.agents import llm as lk_llm
-from livekit.agents import tts as lk_tts
-from livekit.plugins import silero, openai, deepgram, google, groq, elevenlabs
-import requests
+from livekit.plugins import silero
 
+from .analysis.sentiment_analyzer import SentimentAnalyzer
+from .model_factory import create_model_components
+from .rag_cache import _lookup_rag_chunks_with_cache, _normalize_rag_query
+from .room_metadata import parse_room_metadata
 from .settings import settings
 from .session_collector import SessionCollector
+from .voice_helpers import (
+    _cap_context_chunks,
+    _clone_chat_item,
+    _collect_text_content,
+    _compact_text,
+    _extract_context_items,
+    _filter_internal_tool_markup,
+    _install_asyncio_loop_destructor_guard,
+    _install_livekit_room_destructor_guard,
+    _looks_like_editor_write_request,
+    _sanitize_assistant_text_for_speech,
+    _strip_injected_doc_context,
+)
 
 logger = logging.getLogger("voice-agent")
 
 load_dotenv()
 
 
-def _install_livekit_room_destructor_guard() -> None:
-    """Guard older LiveKit Room.__del__ against partially initialized instances."""
-    try:
-        from livekit.rtc.room import Room
-    except Exception:
-        return
-
-    original_del = getattr(Room, "__del__", None)
-    if not callable(original_del):
-        return
-    if getattr(Room, "_safe_destructor_patched", False):
-        return
-
-    def _safe_del(self):
-        # Some older rtc builds can call __del__ on a Room that failed before
-        # _ffi_handle was created, which raises AttributeError during GC.
-        if getattr(self, "_ffi_handle", None) is None:
-            return
-        try:
-            original_del(self)
-        except AttributeError:
-            return
-
-    Room.__del__ = _safe_del
-    setattr(Room, "_safe_destructor_patched", True)
-
-
 _install_livekit_room_destructor_guard()
-
-_RAG_EXECUTOR = ThreadPoolExecutor(max_workers=4)
-_RAG_CACHE_LOCK = threading.Lock()
-_RAG_RESULT_CACHE: dict[str, tuple[float, list[str]]] = {}
-_RAG_CACHE_TTL_SECONDS = 45.0
-_RAG_CACHE_MAX_ENTRIES = 256
-
-
-def _normalize_rag_query(query: str) -> str:
-    return _compact_text(query.lower(), settings.rag_query_max_chars)
-
-
-def _rag_cache_key(target_id: str, query: str, k: int) -> str:
-    return f"{target_id}|{k}|{_normalize_rag_query(query)}"
-
-
-def _get_cached_rag_results(cache_key: str) -> list[str] | None:
-    now = time.time()
-    with _RAG_CACHE_LOCK:
-        cached = _RAG_RESULT_CACHE.get(cache_key)
-        if not cached:
-            return None
-
-        saved_at, chunks = cached
-        if now - saved_at > _RAG_CACHE_TTL_SECONDS:
-            _RAG_RESULT_CACHE.pop(cache_key, None)
-            return None
-        return list(chunks)
-
-
-def _set_cached_rag_results(cache_key: str, chunks: list[str]) -> None:
-    now = time.time()
-    with _RAG_CACHE_LOCK:
-        if len(_RAG_RESULT_CACHE) >= _RAG_CACHE_MAX_ENTRIES:
-            oldest_key = min(_RAG_RESULT_CACHE, key=lambda key: _RAG_RESULT_CACHE[key][0])
-            _RAG_RESULT_CACHE.pop(oldest_key, None)
-        _RAG_RESULT_CACHE[cache_key] = (now, list(chunks))
-
-
-def _lookup_rag_chunks_with_cache(store: Any, target_id: str, query: str, k: int) -> list[str]:
-    cache_key = _rag_cache_key(target_id, query, k)
-    cached = _get_cached_rag_results(cache_key)
-    if cached is not None:
-        logger.debug("RAG cache hit for target '%s'", target_id)
-        return cached
-
-    future = _RAG_EXECUTOR.submit(
-        store.query_for_interview_sync,
-        target_id,
-        query,
-        k,
-    )
-    try:
-        chunks = future.result(timeout=settings.rag_lookup_timeout_seconds)
-    except FutureTimeoutError:
-        logger.warning(
-            "Qdrant RAG lookup timed out for target '%s' after %.1fs",
-            target_id,
-            settings.rag_lookup_timeout_seconds,
-        )
-        return []
-    except Exception as rag_err:
-        logger.warning("Qdrant RAG lookup failed for target '%s': %s", target_id, rag_err)
-        return []
-
-    _set_cached_rag_results(cache_key, chunks)
-    logger.info("Qdrant RAG: Found %d hits for target '%s'", len(chunks), target_id)
-    return chunks
-
-
-def _collect_text_content(content: Any) -> str:
-    """Extract plain text from SDK message content variants."""
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-            else:
-                text = getattr(item, "text", None)
-                if isinstance(text, str):
-                    parts.append(text)
-        return " ".join(parts)
-
-    return str(content or "")
-
-
-def _compact_text(value: str, max_chars: int) -> str:
-    """Normalize whitespace and cap text length conservatively."""
-    normalized = re.sub(r"\s+", " ", value).strip()
-    if len(normalized) <= max_chars:
-        return normalized
-    clipped = normalized[:max_chars].rsplit(" ", 1)[0]
-    return (clipped or normalized[:max_chars]) + " ..."
-
-
-_TOOL_CALL_BLOCK_RE = re.compile(
-    r"<\s*tool_call\s*>.*?<\s*/\s*tool_call\s*>",
-    flags=re.IGNORECASE | re.DOTALL,
-)
-_TOOL_CALL_TAG_RE = re.compile(r"<\s*/?\s*tool_call\s*>", flags=re.IGNORECASE)
-_INTERNAL_TOOL_NAME_RE = re.compile(
-    r"\b(read_candidates_code|update_candidate_code|run_candidate_tests|request_document_context|provide_feedback|get_interview_tip)\b",
-    flags=re.IGNORECASE,
-)
-
-_EDITOR_SURFACE_HINTS = (
-    "editor",
-    "ide",
-    "code tab",
-    "coding tab",
-)
-
-_EDITOR_WRITE_ACTION_HINTS = (
-    "type",
-    "write",
-    "put",
-    "paste",
-    "insert",
-    "edit",
-    "update",
-    "add",
-)
-
-
-def _sanitize_assistant_text_for_speech(text: str) -> str:
-    cleaned = _TOOL_CALL_BLOCK_RE.sub(" ", text or "")
-    cleaned = _TOOL_CALL_TAG_RE.sub(" ", cleaned)
-    cleaned = _INTERNAL_TOOL_NAME_RE.sub(" ", cleaned)
-    return re.sub(r"\s+", " ", cleaned).strip()
-
-
-def _looks_like_editor_write_request(text: str) -> bool:
-    lowered = (text or "").lower()
-    if not lowered:
-        return False
-
-    has_editor_hint = any(token in lowered for token in _EDITOR_SURFACE_HINTS)
-    has_write_hint = any(token in lowered for token in _EDITOR_WRITE_ACTION_HINTS)
-    return has_editor_hint and has_write_hint
-
-
-async def _filter_internal_tool_markup(text: AsyncIterable[str]) -> AsyncIterable[str]:
-    """Strip leaked tool-call tags/names from streamed assistant text before TTS."""
-    buffer = ""
-    # Keep a small tail so patterns split across chunks can be matched safely.
-    safety_tail = 256
-
-    async for chunk in text:
-        buffer += chunk
-        if len(buffer) <= safety_tail * 2:
-            continue
-
-        emit_text = buffer[:-safety_tail]
-        sanitized = _sanitize_assistant_text_for_speech(emit_text)
-        if sanitized:
-            yield sanitized
-        buffer = buffer[-safety_tail:]
-
-    tail = _sanitize_assistant_text_for_speech(buffer)
-    if tail:
-        yield tail
-
-
-def _cap_context_chunks(
-    chunks: list[str],
-    *,
-    max_chunks: int,
-    chunk_max_chars: int,
-    total_max_chars: int,
-) -> list[str]:
-    """Bound context size before injecting into prompts."""
-    limited: list[str] = []
-    current_size = 0
-
-    for raw in chunks:
-        if len(limited) >= max_chunks:
-            break
-
-        compact = _compact_text(raw, chunk_max_chars)
-        if not compact:
-            continue
-
-        projected = current_size + len(compact)
-        if limited:
-            projected += len("\n---\n")
-
-        if projected > total_max_chars:
-            break
-
-        limited.append(compact)
-        current_size = projected
-
-    return limited
-
-
-_DOC_CONTEXT_BLOCK_RE = re.compile(
-    r"\[DOCUMENTS / CONTEXT PROVIDED\].*?\[END CONTEXT\]\s*",
-    flags=re.DOTALL,
-)
-
-
-def _clone_chat_item(item: Any) -> Any:
-    """Create a deep clone when supported to avoid mutating persistent chat history."""
-    if hasattr(item, "model_copy"):
-        try:
-            return item.model_copy(deep=True)
-        except Exception:
-            pass
-
-    if hasattr(item, "copy"):
-        try:
-            return item.copy(deep=True)
-        except Exception:
-            pass
-
-    return item
-
-
-def _strip_injected_doc_context(value: str) -> str:
-    """Remove previously injected doc context so it does not snowball across turns."""
-    if "[DOCUMENTS / CONTEXT PROVIDED]" not in value or "[END CONTEXT]" not in value:
-        return value
-
-    cleaned = _DOC_CONTEXT_BLOCK_RE.sub("", value).strip()
-    if cleaned.startswith("Question / Speech:"):
-        cleaned = cleaned.split(":", 1)[1].strip()
-    return cleaned or value
-
-
-def _extract_context_items(chat_ctx: Any) -> list[Any]:
-    """Read context items across SDK variants (`items` or legacy `messages`)."""
-    items_obj = getattr(chat_ctx, "items", None)
-    if callable(items_obj):
-        items_obj = items_obj()
-
-    if items_obj is None:
-        items_obj = getattr(chat_ctx, "messages", None)
-        if callable(items_obj):
-            items_obj = items_obj()
-
-    if items_obj is None:
-        return []
-
-    if isinstance(items_obj, list):
-        return items_obj
-
-    try:
-        return list(items_obj)
-    except TypeError:
-        return []
-
-
-class _KokoroChunkedStream(lk_tts.ChunkedStream):
-    def __init__(
-        self,
-        *,
-        tts: "LocalKokoroTTS",
-        input_text: str,
-        conn_options: APIConnectOptions,
-    ) -> None:
-        super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
-        self._kokoro_tts = tts
-
-    async def _run(self, output_emitter: lk_tts.AudioEmitter) -> None:
-        text = _compact_text(self.input_text.strip(), 1000)
-        if not text:
-            return
-
-        payload = {
-            "model": self._kokoro_tts.model,
-            "input": text,
-            "voice": self._kokoro_tts.voice,
-            "response_format": "wav",
-        }
-
-        candidate_base_urls = [self._kokoro_tts.base_url]
-        if "host.docker.internal" in self._kokoro_tts.base_url:
-            candidate_base_urls.append(self._kokoro_tts.base_url.replace("host.docker.internal", "kokoro"))
-        elif "localhost" in self._kokoro_tts.base_url:
-            candidate_base_urls.append(self._kokoro_tts.base_url.replace("localhost", "kokoro"))
-            if os.path.exists("/.dockerenv"):
-                candidate_base_urls.append(
-                    self._kokoro_tts.base_url.replace("localhost", "host.docker.internal")
-                )
-        elif "kokoro" in self._kokoro_tts.base_url:
-            if os.path.exists("/.dockerenv"):
-                candidate_base_urls.append(
-                    self._kokoro_tts.base_url.replace("kokoro", "host.docker.internal")
-                )
-            candidate_base_urls.append(self._kokoro_tts.base_url.replace("kokoro", "localhost"))
-
-        # Keep insertion order while removing duplicates.
-        candidate_base_urls = list(dict.fromkeys(candidate_base_urls))
-
-        last_error: Exception | None = None
-        attempts_per_endpoint = 2
-        for endpoint in candidate_base_urls:
-            for attempt in range(1, attempts_per_endpoint + 1):
-                try:
-                    response = await asyncio.to_thread(
-                        requests.post,
-                        f"{endpoint}/audio/speech",
-                        json=payload,
-                        timeout=(5, 45),
-                    )
-                    response.raise_for_status()
-
-                    with io.BytesIO(response.content) as wav_io:
-                        with wave.open(wav_io, "rb") as wav_file:
-                            sample_rate = wav_file.getframerate()
-                            num_channels = wav_file.getnchannels()
-                            pcm_bytes = wav_file.readframes(wav_file.getnframes())
-
-                    output_emitter.initialize(
-                        request_id=f"kokoro-{uuid.uuid4().hex[:8]}",
-                        sample_rate=sample_rate,
-                        num_channels=num_channels,
-                        mime_type="audio/pcm",
-                    )
-                    output_emitter.push(pcm_bytes)
-                    return
-                except (requests.RequestException, wave.Error, ValueError) as exc:
-                    last_error = exc
-                    logger.warning(
-                        "Kokoro TTS request failed (endpoint=%s, attempt=%s/%s): %s",
-                        endpoint,
-                        attempt,
-                        attempts_per_endpoint,
-                        exc,
-                    )
-                    if attempt < attempts_per_endpoint:
-                        await asyncio.sleep(0.25 * attempt)
-
-        # Do not crash the LiveKit generation task if a single TTS request fails.
-        logger.error(
-            "Kokoro TTS failed for current utterance after retrying endpoints %s: %s",
-            candidate_base_urls,
-            last_error,
-        )
-        return
-
-
-class LocalKokoroTTS(lk_tts.TTS):
-    def __init__(
-        self,
-        *,
-        base_url: str,
-        model: str = "kokoro",
-        voice: str = "af_sky",
-        sample_rate: int = 24000,
-        num_channels: int = 1,
-    ) -> None:
-        super().__init__(
-            capabilities=lk_tts.TTSCapabilities(streaming=False),
-            sample_rate=sample_rate,
-            num_channels=num_channels,
-        )
-        self.base_url = base_url.rstrip("/")
-        self._model = model
-        self.voice = voice
-
-    @property
-    def model(self) -> str:
-        return self._model
-
-    @property
-    def provider(self) -> str:
-        return "kokoro-local"
-
-    def synthesize(
-        self,
-        text: str,
-        *,
-        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
-    ) -> lk_tts.ChunkedStream:
-        return _KokoroChunkedStream(tts=self, input_text=text, conn_options=conn_options)
-
-    async def aclose(self) -> None:
-        return
-
+_install_asyncio_loop_destructor_guard()
 
 class InterviewCoach(Agent):
     """AI Interview Coach Assistant with mode-aware behavior."""
@@ -531,6 +123,7 @@ class InterviewCoach(Agent):
                         TECHNICAL IDE ROUND POLICY:
                         - This is an IDE-enabled technical interview and you must actively lead it.
                         - Proactively inspect live code frequently with read_candidates_code, especially before feedback or a new prompt.
+                        - Call read_candidates_code at most once per response turn unless the IDE content has changed.
                         - Keep tool use silent and speak only in natural interviewer language.
                         - Use update_candidate_code for small collaborative edits when the candidate is stuck, buggy, or asks for help.
                         - Use run_candidate_tests to execute concrete test cases against the current IDE code before final recommendations.
@@ -579,7 +172,16 @@ class InterviewCoach(Agent):
         self.questions: list[str] = []
         self.current_ide_content: str = ""
         self.current_ide_language: str = "javascript"
+        self._last_nonempty_ide_content: str = ""
+        self._last_nonempty_ide_language: str = "javascript"
+        self._last_nonempty_ide_at: float = 0.0
         self._doc_query_last_seen: dict[str, float] = {}
+        self.sentiment_analyzer = SentimentAnalyzer()
+        self.latest_sentiment_signal = None
+        self._last_code_read_signature: str = ""
+        self._last_code_read_at: float = 0.0
+        self._duplicate_code_read_count: int = 0
+        self._read_code_tool_cooldown_until: float = 0.0
 
     @function_tool()
     async def read_candidates_code(
@@ -587,15 +189,66 @@ class InterviewCoach(Agent):
         context: RunContext,
     ) -> str:
         """Read the live code from the candidate's IDE. Use this frequently in technical rounds to evaluate progress, correctness, and next steps."""
+        code = self.current_ide_content or ""
+        now = time.monotonic()
+        snapshot_signature = f"{self.current_ide_language}|{len(code)}|{hash(code[:4000])}"
+        is_duplicate_read = (
+            snapshot_signature == self._last_code_read_signature
+            and (now - self._last_code_read_at) <= 2.5
+        )
+
+        if is_duplicate_read:
+            self._duplicate_code_read_count += 1
+        else:
+            self._duplicate_code_read_count = 0
+
+        self._last_code_read_signature = snapshot_signature
+        self._last_code_read_at = now
+
         logger.info(
             "read_candidates_code invoked (ide_enabled=%s, chars=%d, language=%s)",
             self.ide_enabled,
-            len(self.current_ide_content or ""),
+            len(code),
             self.current_ide_language,
         )
-        if not self.current_ide_content.strip():
+
+        if now < self._read_code_tool_cooldown_until:
+            remaining = max(0, int(self._read_code_tool_cooldown_until - now))
+            return (
+                "[READ_CODE_COOLDOWN] IDE snapshot unchanged. "
+                f"Skip read_candidates_code for about {remaining}s and continue the interview naturally."
+            )
+
+        if self._duplicate_code_read_count >= 1:
+            self._read_code_tool_cooldown_until = now + 9.0
+            return (
+                "No new IDE edits since the last code read. "
+                "Do not call read_candidates_code again until the candidate updates code; "
+                "continue with feedback, a focused follow-up, or one update_candidate_code action."
+            )
+
+        if not code.strip():
+            if self._last_nonempty_ide_content and (now - self._last_nonempty_ide_at) <= 180.0:
+                preview = self._last_nonempty_ide_content
+                if len(preview) > 7000:
+                    preview = f"{preview[:7000]}\n\n# ... truncated for brevity ..."
+
+                age_seconds = max(1, int(now - self._last_nonempty_ide_at))
+                return (
+                    "Current editor snapshot is empty, but the latest non-empty snapshot is shown below "
+                    f"({age_seconds}s old, {self._last_nonempty_ide_language}).\n\n"
+                    f"{preview}"
+                )
             return "The IDE is currently empty or the candidate hasn't typed anything yet."
-        return f"Here is the candidate's current code:\n\n{self.current_ide_content}"
+
+        truncated_code = code
+        if len(truncated_code) > 7000:
+            truncated_code = f"{truncated_code[:7000]}\n\n# ... truncated for brevity ..."
+
+        return (
+            f"Here is the candidate's current code ({self.current_ide_language}, {len(code)} chars):\n\n"
+            f"{truncated_code}"
+        )
 
     @function_tool()
     async def update_candidate_code(
@@ -930,182 +583,6 @@ def prewarm(proc: JobProcess):
 server.setup_fnc = prewarm
 
 
-def create_model_components(settings):
-    """Factory to create LLM, STT, and TTS instances with support for mixing local and online providers."""
-    def _normalize_local_url(url: str) -> str:
-        # Inside Docker, localhost points to the current container; use host gateway instead.
-        if url and os.path.exists("/.dockerenv") and "localhost" in url:
-            return url.replace("localhost", "host.docker.internal")
-        return url
-
-    def _has_google_credentials() -> bool:
-        if settings.google_credentials_file:
-            return True
-
-        # Detect ADC availability for environments where GOOGLE_APPLICATION_CREDENTIALS is not explicitly set.
-        try:
-            import importlib
-
-            google_auth = importlib.import_module("google.auth")
-            google_auth.default()
-            return True
-        except Exception:
-            return False
-
-    def _openai_stt_fallback():
-        whisper_url = _normalize_local_url(settings.whisper_base_url)
-        if settings.use_local_ai or (
-            whisper_url
-            and (
-                "localhost" in whisper_url
-                or "whisper" in whisper_url
-                or "host.docker.internal" in whisper_url
-            )
-        ):
-            return openai.STT(
-                base_url=whisper_url,
-                model="Systran/faster-whisper-small",
-                api_key="no-key-needed",
-            )
-        return openai.STT(model="whisper-1")
-
-    def _openai_llm_fallback():
-        llm_timeout = httpx.Timeout(
-            connect=settings.llm_timeout_connect_seconds,
-            read=settings.llm_timeout_read_seconds,
-            write=settings.llm_timeout_write_seconds,
-            pool=settings.llm_timeout_pool_seconds,
-        )
-        llama_url = _normalize_local_url(settings.llama_base_url)
-        if settings.use_local_ai or (
-            llama_url
-            and (
-                "localhost" in llama_url
-                or "llama" in llama_url
-                or "host.docker.internal" in llama_url
-            )
-        ):
-            return openai.LLM(
-                base_url=llama_url,
-                model=settings.llama_model,
-                api_key="no-key-needed",
-                timeout=llm_timeout,
-            )
-        return openai.LLM(model="gpt-4o", timeout=llm_timeout)
-
-    def _openai_tts_fallback():
-        kokoro_url = _normalize_local_url(settings.kokoro_base_url)
-        if settings.use_local_ai or (
-            kokoro_url
-            and (
-                "localhost" in kokoro_url
-                or "kokoro" in kokoro_url
-                or "host.docker.internal" in kokoro_url
-            )
-        ):
-            return LocalKokoroTTS(base_url=kokoro_url, model="kokoro", voice="af_sky")
-        return openai.TTS(model="tts-1", voice="alloy")
-
-    def _google_api_key_looks_usable(api_key: str | None) -> bool:
-        if not api_key:
-            return False
-
-        # Fast preflight to avoid runtime job crashes on expired/invalid Gemini API keys.
-        try:
-            req = urllib.request.Request(
-                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
-                method="GET",
-            )
-            with urllib.request.urlopen(req, timeout=5) as response:
-                return 200 <= response.status < 300
-        except Exception:
-            return False
-
-    stt_provider = settings.stt_provider
-    llm_provider = settings.llm_provider
-    tts_provider = settings.tts_provider
-
-    if settings.use_local_ai:
-        stt_provider = "openai"
-        llm_provider = "openai"
-        tts_provider = "openai"
-        logger.info(
-            "USE_LOCAL_AI is enabled. Routing STT/LLM/TTS to OpenAI-compatible local endpoints."
-        )
-
-    # --- STT ---
-    try:
-        if stt_provider == "deepgram":
-            stt = deepgram.STT(api_key=settings.deepgram_api_key)
-        elif stt_provider == "google":
-            # Google STT needs service account credentials or ADC.
-            if not _has_google_credentials():
-                raise ValueError("Google STT requires credentials_file or ADC")
-            stt = google.STT(credentials_file=settings.google_credentials_file) if settings.google_credentials_file else google.STT()
-        elif stt_provider == "groq":
-            stt = groq.STT(api_key=settings.groq_api_key)
-        else:
-            stt = _openai_stt_fallback()
-    except Exception as e:
-        logger.warning(
-            "Failed to initialize STT provider '%s' (%s). Falling back to OpenAI-compatible STT.",
-            stt_provider,
-            e,
-        )
-        stt = _openai_stt_fallback()
-
-    # --- LLM ---
-    try:
-        if llm_provider == "google":
-            if not _google_api_key_looks_usable(settings.google_api_key):
-                raise ValueError("Google LLM API key is missing, invalid, or expired")
-            llm = google.LLM(model="gemini-2.0-flash-exp", api_key=settings.google_api_key)
-        elif llm_provider == "groq":
-            llm = groq.LLM(model="llama3-8b-8192", api_key=settings.groq_api_key)
-        else:
-            llm = _openai_llm_fallback()
-    except Exception as e:
-        logger.warning(
-            "Failed to initialize LLM provider '%s' (%s). Falling back to OpenAI-compatible LLM.",
-            llm_provider,
-            e,
-        )
-        llm = _openai_llm_fallback()
-
-    # --- TTS ---
-    try:
-        if tts_provider == "elevenlabs":
-            tts = elevenlabs.TTS(api_key=settings.eleven_api_key)
-        elif tts_provider == "deepgram":
-            tts = deepgram.TTS(api_key=settings.deepgram_api_key)
-        elif tts_provider == "google":
-            # Google TTS needs service account credentials or ADC.
-            if not _has_google_credentials():
-                raise ValueError("Google TTS requires credentials_file or ADC")
-            tts = google.TTS(credentials_file=settings.google_credentials_file) if settings.google_credentials_file else google.TTS()
-        else:
-            tts = _openai_tts_fallback()
-    except Exception as e:
-        logger.warning(
-            "Failed to initialize TTS provider '%s' (%s). Falling back to OpenAI-compatible TTS.",
-            tts_provider,
-            e,
-        )
-        tts = _openai_tts_fallback()
-
-    return stt, llm, tts
-
-
-def parse_room_metadata(metadata_str: str | None) -> dict[str, Any]:
-    """Parse room metadata JSON string."""
-    if not metadata_str:
-        return {}
-    try:
-        return json.loads(metadata_str)
-    except json.JSONDecodeError:
-        return {}
-
-
 @server.rtc_session()
 async def voice_agent(ctx: JobContext):
     """Main entrypoint for the voice agent RTC session."""
@@ -1258,17 +735,62 @@ async def voice_agent(ctx: JobContext):
                     if not query:
                         return original_chat(*args, **kwargs)
 
+                    delivery_signal_block = ""
+                    if agent.mode == "learning" or settings.guide_mode:
+                        sentiment_signal = agent.sentiment_analyzer.analyze(query)
+                        agent.latest_sentiment_signal = sentiment_signal
+                        if sentiment_signal.should_coach:
+                            delivery_signal_block = sentiment_signal.to_prompt_block()
+
+                    def _compose_augmented_prompt(
+                        question_text: str,
+                        doc_context: str | None = None,
+                        extra_guard: str | None = None,
+                    ) -> str:
+                        sections: list[str] = []
+                        if delivery_signal_block:
+                            sections.append(delivery_signal_block)
+                        if doc_context:
+                            sections.append(
+                                f"[DOCUMENTS / CONTEXT PROVIDED]\n{doc_context}\n[END CONTEXT]"
+                            )
+                        if extra_guard:
+                            sections.append(
+                                f"[TOOL USAGE GUARD]\n{extra_guard}\n[END TOOL USAGE GUARD]"
+                            )
+                        sections.append(f"Question / Speech: {question_text}")
+                        return "\n\n".join(sections)
+
                     if ide_enabled:
+                        if time.monotonic() < agent._read_code_tool_cooldown_until:
+                            remaining_s = max(
+                                1,
+                                int(agent._read_code_tool_cooldown_until - time.monotonic()),
+                            )
+                            user_msg.content = _compose_augmented_prompt(
+                                query,
+                                extra_guard=(
+                                    "IDE snapshot has not changed recently. "
+                                    f"Do not call read_candidates_code for ~{remaining_s}s. "
+                                    "Ask one concise follow-up or provide targeted feedback using the latest known code state."
+                                ),
+                            )
+                        elif delivery_signal_block:
+                            user_msg.content = _compose_augmented_prompt(query)
                         logger.debug("Skipping proactive RAG for IDE-enabled round.")
                         return original_chat(*args, **kwargs)
 
                     if _looks_like_editor_write_request(query):
+                        if delivery_signal_block:
+                            user_msg.content = _compose_augmented_prompt(query)
                         logger.debug("Skipping proactive RAG for editor-write intent query.")
                         return original_chat(*args, **kwargs)
 
                     now_monotonic = time.monotonic()
                     query_key = query.lower()
                     if query_key == last_proactive_rag_query and (now_monotonic - last_proactive_rag_at) < 2.5:
+                        if delivery_signal_block:
+                            user_msg.content = _compose_augmented_prompt(query)
                         logger.debug("Skipping duplicate proactive RAG lookup for repeated query.")
                         return original_chat(*args, **kwargs)
 
@@ -1316,11 +838,7 @@ async def voice_agent(ctx: JobContext):
                         )
                         if limited_results:
                             context_str = "\n---\n".join(limited_results)
-                            augmented_prompt = (
-                                f"[DOCUMENTS / CONTEXT PROVIDED]\n{context_str}\n[END CONTEXT]\n\n"
-                                f"Question / Speech: {query}"
-                            )
-                            user_msg.content = augmented_prompt
+                            user_msg.content = _compose_augmented_prompt(query, context_str)
                             logger.info("Injected %d proactive RAG chunks into prompt.", len(limited_results))
                         else:
                             logger.info("Proactive RAG skipped injection due to prompt budget limits.")
@@ -1331,6 +849,8 @@ async def voice_agent(ctx: JobContext):
                             template_id,
                             session_id,
                         )
+                        if delivery_signal_block:
+                            user_msg.content = _compose_augmented_prompt(query)
 
                 if sanitized_context_items:
                     logger.debug(
@@ -1406,81 +926,22 @@ async def voice_agent(ctx: JobContext):
     editor_write_request_cooldown_s = 10.0
     last_editor_write_request_at = 0.0
 
-    def _latest_interviewer_prompt_text() -> str:
-        for entry in reversed(collector.data.transcript):
-            if getattr(entry.speaker, "value", "") != "interviewer":
-                continue
-            text = (entry.text or "").strip()
-            if not text or text.startswith("[IDE]"):
-                continue
-            return text
-        return ""
-
-    def _build_editor_note_snippet(request_text: str) -> str:
-        request_excerpt = _compact_text(request_text, 180)
-        prompt_excerpt = _compact_text(_latest_interviewer_prompt_text(), 220)
-        language = (agent.current_ide_language or "").strip().lower()
-
-        if language == "python":
-            return (
-                "\n# Interview note:\n"
-                f"# Candidate request: {request_excerpt}\n"
-                f"# Current prompt: {prompt_excerpt or 'Implement the requested solution.'}\n"
-                "# TODO: Continue coding below.\n"
-            )
-
-        comment_prefix = "//"
-        if language == "sql":
-            comment_prefix = "--"
-
-        return (
-            f"\n{comment_prefix} Interview note:\n"
-            f"{comment_prefix} Candidate request: {request_excerpt}\n"
-            f"{comment_prefix} Current prompt: {prompt_excerpt or 'Implement the requested solution.'}\n"
-            f"{comment_prefix} TODO: Continue coding below.\n"
-        )
-
-    async def _apply_editor_write_fallback(request_text: str) -> None:
-        snippet = _build_editor_note_snippet(request_text)
-        payload = {
-            "type": "ide_apply",
-            "intent": "append",
-            "code": snippet,
-            "language": agent.current_ide_language or "javascript",
-            "explanation": "Added the request context in the editor so we can continue coding.",
-            "typing_ms": 900,
-            "timestamp": int(time.time() * 1000),
-        }
-
+    def _trigger_editor_write_guidance(request_text: str) -> None:
+        request_excerpt = _compact_text(request_text, 220)
         try:
-            await publish_ide_event(payload)
-            agent.current_ide_content = f"{agent.current_ide_content}{snippet}"
-            collector.add_code_history_event(
-                actor="ai",
-                event_type="code_apply",
-                summary="Inserted interview note snippet into IDE to continue coding.",
-                language=agent.current_ide_language,
-                details={
-                    "intent": "append",
-                    "charCount": len(snippet),
-                    "source": "fallback_transcript_trigger",
-                    "codeSnapshot": agent.current_ide_content,
-                },
-            )
-            logger.info(
-                "Applied direct IDE fallback write from transcript request (chars=%d, language=%s)",
-                len(snippet),
-                payload["language"],
-            )
             session.generate_reply(
                 instructions=(
-                    "Acknowledge briefly that you added content in the editor and continue the interview. "
-                    "Do not mention tools or internal operations."
+                    "The candidate asked for editor help. "
+                    f"Candidate request: {request_excerpt}. "
+                    "Respond naturally in one to two sentences. "
+                    "If the request is specific enough, apply exactly one concrete update via update_candidate_code. "
+                    "If ambiguous, ask exactly one clarifying question. "
+                    "Never insert transcript/meta note templates into the editor."
                 ),
                 allow_interruptions=True,
             )
         except Exception as e:
-            logger.warning("Failed to apply direct IDE fallback write: %s", e)
+            logger.warning("Failed to trigger editor-write guidance: %s", e)
 
     @session.on("user_input_transcribed")
     def on_user_input_transcribed(ev):
@@ -1505,7 +966,7 @@ async def voice_agent(ctx: JobContext):
                 if has_editor_write_intent:
                     if (now_monotonic - last_editor_write_request_at) >= editor_write_request_cooldown_s:
                         last_editor_write_request_at = now_monotonic
-                        asyncio.create_task(_apply_editor_write_fallback(merged_transcript or transcript))
+                        _trigger_editor_write_guidance(merged_transcript or transcript)
                     else:
                         logger.debug("Skipped direct IDE fallback write due to cooldown.")
 
@@ -1525,6 +986,40 @@ async def voice_agent(ctx: JobContext):
 
     report_generation_started = False
 
+    def ensure_final_code_snapshot_for_report() -> None:
+        if not agent.ide_enabled:
+            return
+
+        current_code = agent.current_ide_content or ""
+        if not current_code.strip():
+            return
+
+        has_existing_snapshot = any(
+            isinstance(getattr(event, "details", None), dict)
+            and isinstance(event.details.get("codeSnapshot"), str)
+            and bool(event.details.get("codeSnapshot", "").strip())
+            for event in collector.data.code_history
+        )
+        if has_existing_snapshot:
+            return
+
+        collector.add_code_history_event(
+            actor="user",
+            event_type="code_snapshot",
+            summary="Captured final IDE snapshot before report generation.",
+            language=agent.current_ide_language,
+            details={
+                "source": "report_finalization_fallback",
+                "charCount": len(current_code),
+                "codeSnapshot": current_code,
+            },
+        )
+        logger.info(
+            "Added fallback final IDE snapshot for report generation (chars=%d, language=%s)",
+            len(current_code),
+            agent.current_ide_language,
+        )
+
     def trigger_report_generation(reason: str) -> None:
         nonlocal report_generation_started
         if report_generation_started:
@@ -1533,6 +1028,7 @@ async def voice_agent(ctx: JobContext):
 
         report_generation_started = True
         logger.info("Finalizing interview report (%s)...", reason)
+        ensure_final_code_snapshot_for_report()
         session_data = collector.end_session()
 
         # Store it locally just in case
@@ -1593,29 +1089,46 @@ async def voice_agent(ctx: JobContext):
 
             if payload_type == "ide_change":
                 previous_code = agent.current_ide_content
+                previous_language = agent.current_ide_language
                 source = str(payload.get("source", "")).strip().lower()
-                incoming_code = payload.get("code", "")
+                incoming_code_raw = payload.get("code", "")
+                incoming_code = (
+                    incoming_code_raw
+                    if isinstance(incoming_code_raw, str)
+                    else str(incoming_code_raw or "")
+                )
                 agent.current_ide_content = incoming_code
                 incoming_language = payload.get("language")
                 if isinstance(incoming_language, str) and incoming_language.strip():
-                    agent.current_ide_language = incoming_language
+                    agent.current_ide_language = incoming_language.strip().lower()
+
+                if incoming_code.strip():
+                    agent._last_nonempty_ide_content = incoming_code
+                    agent._last_nonempty_ide_language = agent.current_ide_language
+                    agent._last_nonempty_ide_at = time.monotonic()
+
+                agent._duplicate_code_read_count = 0
+                agent._read_code_tool_cooldown_until = 0.0
 
                 delta_chars = abs(len(incoming_code or "") - len(previous_code or ""))
+                language_changed = previous_language != agent.current_ide_language
                 logger.info(
-                    "Received IDE change event (source=%s, chars=%d, language=%s)",
+                    "Received IDE change event (source=%s, chars=%d, language=%s, language_changed=%s)",
                     source or "unknown",
                     len(incoming_code or ""),
                     agent.current_ide_language,
+                    language_changed,
                 )
 
                 if agent.ide_enabled and source in {"", "candidate", "user"}:
-                    has_meaningful_change = (
+                    has_substantive_code_change = (
                         delta_chars >= 8
                         or (
                             bool(incoming_code and incoming_code.strip())
                             and not bool(previous_code and previous_code.strip())
                         )
                     )
+                    has_meaningful_change = has_substantive_code_change or language_changed
                     if has_meaningful_change:
                         first_code_line = ""
                         for line in (incoming_code or "").splitlines():
@@ -1623,19 +1136,34 @@ async def voice_agent(ctx: JobContext):
                                 first_code_line = _compact_text(line.strip(), 120)
                                 break
 
-                        collector.add_code_history_event(
-                            actor="user",
-                            event_type="code_change",
-                            summary=(
+                        event_type = (
+                            "language_change"
+                            if language_changed and not has_substantive_code_change
+                            else "code_change"
+                        )
+
+                        if language_changed and not has_substantive_code_change:
+                            summary = (
+                                f"Switched editor language from {previous_language or 'unknown'} to {agent.current_ide_language}."
+                            )
+                        else:
+                            summary = (
                                 f"Updated code: {first_code_line}"
                                 if first_code_line
                                 else f"Updated editor content ({len(incoming_code or '')} chars)."
-                            ),
+                            )
+
+                        collector.add_code_history_event(
+                            actor="user",
+                            event_type=event_type,
+                            summary=summary,
                             language=agent.current_ide_language,
                             details={
                                 "source": source or "candidate",
                                 "charCount": len(incoming_code or ""),
                                 "deltaChars": delta_chars,
+                                "languageChanged": language_changed,
+                                "previousLanguage": previous_language,
                                 "intervalSec": payload.get("intervalSec"),
                                 "codeSnapshot": incoming_code,
                             },

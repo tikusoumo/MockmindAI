@@ -16,6 +16,7 @@ from ..session_collector import SessionData
 from .speech_analyzer import SpeechAnalyzer, SpeechAnalysisResult
 from .cv_analyzer import CVAnalyzer, CVAnalysisResult, Rating
 from .semantic_analyzer import SemanticAnalyzer, SemanticAnalysisResult, SWOT, Resource
+from .sentiment_analyzer import SentimentAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class ReportGenerator:
         self.speech_analyzer = SpeechAnalyzer()
         self.cv_analyzer = CVAnalyzer()
         self.semantic_analyzer = SemanticAnalyzer()
+        self.sentiment_analyzer = SentimentAnalyzer()
 
     def generate(
         self,
@@ -138,6 +140,13 @@ class ReportGenerator:
         semantic_result = self.semantic_analyzer.analyze(
             transcript_entries=transcript_dicts,
         )
+
+        candidate_transcript = " ".join(
+            entry.get("text", "")
+            for entry in transcript_dicts
+            if str(entry.get("speaker", "")).strip().lower() in {"candidate", "user", "you", "participant"}
+        ).strip()
+        sentiment_signal = self.sentiment_analyzer.analyze(candidate_transcript)
         
         # Calculate composite scores
         overall_score = self._calculate_overall_score(
@@ -179,6 +188,13 @@ class ReportGenerator:
                 "fillerWords": self._filler_level(speech_result.filler_word_percentage),
                 "pace": self._pace_level(speech_result.average_wpm),
                 "clarity": self._clarity_level(speech_result.clarity_score),
+                "sentiment": sentiment_signal.sentiment_label.title(),
+                "sentimentScore": sentiment_signal.sentiment_score,
+                "tone": sentiment_signal.tone_label.title(),
+                "mood": sentiment_signal.mood_label.title(),
+                "pronunciationClarity": sentiment_signal.pronunciation_clarity,
+                "hesitationCount": sentiment_signal.hesitation_count,
+                "deliveryGuidance": sentiment_signal.guidance_hint,
             },
             swot={
                 "strengths": semantic_result.swot.strengths,

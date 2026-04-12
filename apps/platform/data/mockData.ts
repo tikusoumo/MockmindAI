@@ -102,6 +102,13 @@ export interface ReportData {
     fillerWords: 'Low' | 'Moderate' | 'High';
     pace: 'Slow' | 'Good' | 'Fast';
     clarity: 'Low' | 'Medium' | 'High';
+    sentiment?: string;
+    sentimentScore?: number;
+    tone?: string;
+    mood?: string;
+    pronunciationClarity?: number;
+    hesitationCount?: number;
+    deliveryGuidance?: string;
   };
   swot: {
     strengths: string[];
@@ -325,6 +332,14 @@ export const mockReport: ReportData = {
     fillerWords: "Moderate",
     pace: "Good",
     clarity: "High",
+    sentiment: "Positive",
+    sentimentScore: 0.34,
+    tone: "Balanced",
+    mood: "Engaged",
+    pronunciationClarity: 86,
+    hesitationCount: 4,
+    deliveryGuidance:
+      "Slow down slightly and replace filler words with short pauses.",
   },
   swot: {
     strengths: [

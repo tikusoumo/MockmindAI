@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { promises as fs } from 'fs';
+import { existsSync, promises as fs } from 'fs';
 import { extname, join } from 'path';
 import puppeteer from 'puppeteer-core';
 import {
@@ -194,6 +194,28 @@ export class ReportsService {
     const opportunities = Array.isArray(swot.opportunities)
       ? swot.opportunities
       : [];
+    const behavioralAnalysisRaw =
+      report.behavioralAnalysis && typeof report.behavioralAnalysis === 'object'
+        ? (report.behavioralAnalysis as unknown as Record<string, unknown>)
+        : {};
+    const sentimentLabel = this.stringifyPrimitive(
+      behavioralAnalysisRaw.sentiment,
+      '',
+    ).trim();
+    const toneLabel = this.stringifyPrimitive(behavioralAnalysisRaw.tone, '').trim();
+    const moodLabel = this.stringifyPrimitive(behavioralAnalysisRaw.mood, '').trim();
+    const pronunciationClarity =
+      typeof behavioralAnalysisRaw.pronunciationClarity === 'number'
+        ? behavioralAnalysisRaw.pronunciationClarity
+        : Number.NaN;
+    const hesitationCount =
+      typeof behavioralAnalysisRaw.hesitationCount === 'number'
+        ? behavioralAnalysisRaw.hesitationCount
+        : Number.NaN;
+    const deliveryGuidance = this.stringifyPrimitive(
+      behavioralAnalysisRaw.deliveryGuidance,
+      '',
+    ).trim();
 
     const testEvents = codeHistory.filter((entry) =>
       ['test_run', 'test_case'].includes(
@@ -277,6 +299,41 @@ export class ReportsService {
           : 'Audio tracks are not available yet for this report. If the interview recording finishes processing, refresh to load them.',
       );
       highlights.push(`${availableTracks.length} audio tracks available`);
+    }
+
+    if (
+      normalizedQuestion.includes('sentiment') ||
+      normalizedQuestion.includes('tone') ||
+      normalizedQuestion.includes('mood') ||
+      normalizedQuestion.includes('pronunciation') ||
+      normalizedQuestion.includes('delivery') ||
+      normalizedQuestion.includes('hesitation')
+    ) {
+      const sentimentValue = sentimentLabel || 'N/A';
+      const toneValue = toneLabel || 'N/A';
+      const moodValue = moodLabel || 'N/A';
+      const pronunciationValue = Number.isFinite(pronunciationClarity)
+        ? `${Math.round(pronunciationClarity)}/100`
+        : 'N/A';
+      const hesitationValue = Number.isFinite(hesitationCount)
+        ? `${Math.round(hesitationCount)}`
+        : 'N/A';
+
+      answerParts.push(
+        `Delivery signals show sentiment ${sentimentValue}, tone ${toneValue}, and mood ${moodValue}. Pronunciation clarity is ${pronunciationValue} with hesitation markers at ${hesitationValue}.`,
+      );
+
+      if (deliveryGuidance) {
+        answerParts.push(`Suggested delivery focus: ${deliveryGuidance}`);
+      }
+
+      highlights.push(`Sentiment: ${sentimentValue}`);
+      highlights.push(`Tone: ${toneValue}`);
+      if (Number.isFinite(pronunciationClarity)) {
+        highlights.push(
+          `Pronunciation clarity: ${Math.round(pronunciationClarity)}/100`,
+        );
+      }
     }
 
     if (answerParts.length === 0) {
@@ -433,9 +490,16 @@ export class ReportsService {
     const codeHistoryPayload = this.normalizeCodeHistoryEntries(
       payload.codeHistory ?? payload.code_history ?? [],
     );
+    let recordingAudioUrl =
+      payload.recordingAudioUrl ?? payload.recording_audio_url ?? undefined;
+
+    if (!recordingAudioUrl) {
+      recordingAudioUrl = (await this.resolveRecordingUrl(sessionId)) ?? undefined;
+    }
+
     const audioTracksPayload = this.normalizeAudioTracks(
       payload.audioTracks ?? payload.audio_tracks ?? [],
-      payload.recordingAudioUrl ?? payload.recording_audio_url ?? undefined,
+      recordingAudioUrl,
     );
 
     const swot = this.attachReportMetadata(swotPayload, {
@@ -493,7 +557,12 @@ export class ReportsService {
               aiFeedback: q.aiFeedback || q.ai_feedback || q.feedback || '',
               score: Number(q.score || 0),
               improvements: q.improvements || q.suggested_improvements || [],
-              audioUrl: q.audioUrl || q.audio_url || undefined,
+              audioUrl: this.resolveQuestionAudioUrl(
+                this.stringifyPrimitive(q.audioUrl ?? q.audio_url, '').trim() ||
+                  undefined,
+                session.id,
+                recordingAudioUrl || null,
+              ),
             })),
           },
           transcripts: {
@@ -574,6 +643,10 @@ export class ReportsService {
       threats: [],
     };
     const resources = Array.isArray(report.resources) ? report.resources : [];
+    const behavioralAnalysis =
+      report.behavioralAnalysis && typeof report.behavioralAnalysis === 'object'
+        ? (report.behavioralAnalysis as unknown as Record<string, unknown>)
+        : {};
 
     const renderList = (items: string[]) => {
       if (!items.length) {
@@ -610,6 +683,30 @@ export class ReportsService {
           )
           .join('')
       : '<tr><td colspan="3" class="muted">No resources available.</td></tr>';
+
+    const behavioralRows = Object.entries(behavioralAnalysis)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => {
+        const metric = key
+          .replace(/_/g, ' ')
+          .replace(/([A-Z])/g, ' $1')
+          .trim();
+
+        const renderedValue =
+          typeof value === 'number'
+            ? Number.isInteger(value)
+              ? String(value)
+              : value.toFixed(2)
+            : String(value);
+
+        return `
+          <tr>
+            <td>${this.escapeHtml(metric)}</td>
+            <td>${this.escapeHtml(renderedValue)}</td>
+          </tr>
+        `;
+      })
+      .join('');
 
     const reportDate = new Date(report.date);
     const formattedDate = Number.isNaN(reportDate.getTime())
@@ -703,6 +800,21 @@ export class ReportsService {
                   <ul>${renderList(Array.isArray(swot.threats) ? swot.threats : [])}</ul>
                 </div>
               </div>
+            </div>
+
+            <div class="section">
+              <h2>Behavioral & Delivery Signals</h2>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${behavioralRows || '<tr><td colspan="2" class="muted">No behavioral or delivery metrics available.</td></tr>'}
+                </tbody>
+              </table>
             </div>
 
             <div class="section">
@@ -869,10 +981,6 @@ export class ReportsService {
         )
           .trim()
           .toLowerCase();
-        const summary = this.stringifyPrimitive(event.summary, '').trim();
-        if (!summary) {
-          return null;
-        }
 
         const rawTimestamp = event.timestamp;
         const timestamp =
@@ -908,6 +1016,25 @@ export class ReportsService {
               details.snapshotCode,
             '',
           ).trim() || undefined;
+
+        const summary =
+          this.stringifyPrimitive(
+            event.summary ?? details.summary ?? details.message,
+            '',
+          ).trim() ||
+          (eventType === 'language_change'
+            ? 'Switched coding language in the editor.'
+            : eventType === 'code_change'
+              ? 'Updated code in the editor.'
+              : eventType === 'code_snapshot'
+                ? 'Captured a code snapshot.'
+                : eventType === 'code_apply'
+                  ? 'Applied AI-assisted code update.'
+                  : eventType === 'test_run'
+                    ? 'Executed tests from the coding editor.'
+                    : snapshotCode
+                      ? 'Captured coding activity.'
+                      : 'Coding event captured.');
 
         if (!details.snapshotId) {
           details.snapshotId = snapshotId;
@@ -1085,9 +1212,23 @@ export class ReportsService {
       return null;
     }
 
-    const recordingsDir = this.getRecordingsDirectory();
     const filePrefix = `${safeSessionId}-recording`;
+    const recordingsDirectories = this.getRecordingsDirectoryCandidates();
 
+    for (const recordingsDir of recordingsDirectories) {
+      const fileName = await this.findRecordingFile(recordingsDir, filePrefix);
+      if (fileName) {
+        return `/public/recordings/${fileName}`;
+      }
+    }
+
+    return null;
+  }
+
+  private async findRecordingFile(
+    recordingsDir: string,
+    filePrefix: string,
+  ): Promise<string | null> {
     try {
       const files = await fs.readdir(recordingsDir);
       const candidates = files.filter(
@@ -1105,18 +1246,37 @@ export class ReportsService {
           (fileName) => extname(fileName).toLowerCase() === extension,
         );
         if (match) {
-          return `/public/recordings/${match}`;
+          return match;
         }
       }
 
-      return `/public/recordings/${candidates[0]}`;
+      return candidates[0];
     } catch {
       return null;
     }
   }
 
   private getRecordingsDirectory(): string {
-    return join(process.cwd(), 'public', 'recordings');
+    const candidates = this.getRecordingsDirectoryCandidates();
+    const existing = candidates.find((candidate) => existsSync(candidate));
+    return existing || candidates[0];
+  }
+
+  private getRecordingsDirectoryCandidates(): string[] {
+    return this.getPublicDirectoryCandidates().map((publicDir) =>
+      join(publicDir, 'recordings'),
+    );
+  }
+
+  private getPublicDirectoryCandidates(): string[] {
+    const candidates = [
+      join(process.cwd(), 'public'),
+      join(process.cwd(), 'apps', 'api', 'public'),
+      join(__dirname, '..', 'public'),
+      join(__dirname, '..', '..', 'public'),
+    ];
+
+    return Array.from(new Set(candidates));
   }
 
   private async createPendingTimeoutFallbackReport(

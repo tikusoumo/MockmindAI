@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
@@ -16,10 +17,22 @@ import { ScheduleModule } from './schedule/schedule.module';
 import { CommunityModule } from './community/community.module';
 import { AdminModule } from './admin/admin.module';
 
+function resolvePublicRootPath(): string {
+  const candidates = [
+    join(process.cwd(), 'public'),
+    join(process.cwd(), 'apps', 'api', 'public'),
+    join(__dirname, '..', 'public'),
+    join(__dirname, '..', '..', 'public'),
+  ];
+
+  const existing = candidates.find((candidate) => existsSync(candidate));
+  return existing || candidates[0];
+}
+
 @Module({
   imports: [
     ServeStaticModule.forRoot({
-      rootPath: join(process.cwd(), 'public'),
+      rootPath: resolvePublicRootPath(),
       serveRoot: '/public',
     }),
     ConfigModule.forRoot({

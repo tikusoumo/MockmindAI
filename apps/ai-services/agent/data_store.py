@@ -216,6 +216,13 @@ store = DataStore(
             "fillerWords": "Moderate",
             "pace": "Good",
             "clarity": "High",
+            "sentiment": "Positive",
+            "sentimentScore": 0.34,
+            "tone": "Balanced",
+            "mood": "Engaged",
+            "pronunciationClarity": 86,
+            "hesitationCount": 4,
+            "deliveryGuidance": "Slow down slightly and replace filler words with short pauses.",
         },
         "swot": {
             "strengths": [

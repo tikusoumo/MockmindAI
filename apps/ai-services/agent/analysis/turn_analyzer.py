@@ -14,19 +14,16 @@ from typing import Any
 import numpy as np
 
 from .audio_analyzer import AudioAnalyzer, AudioAnalysisResult, EmotionState, EMOTION_EMOJI
-from .speech_analyzer import SpeechAnalyzer, FILLER_WORDS
+from .speech_analyzer import SpeechAnalyzer
 from .cv_analyzer import CVAnalysisResult
 from .combined_scorer import CombinedScorer, CombinedTurnScore
-
-
-# Filler sounds that STT might transcribe differently
-FILLER_SOUNDS = {
-    "umm", "um", "uh", "uhh", "hmm", "hm", "mmm", "mm",
-    "ahh", "ah", "err", "er", "ehh", "eh", "aah",
-}
-
-# Merge with text-based fillers for comprehensive detection
-ALL_FILLERS = FILLER_WORDS | FILLER_SOUNDS
+from .turn_scoring import (
+    ALL_FILLERS,
+    calculate_fluency,
+    calculate_overall,
+    generate_coaching_summary,
+    generate_feedback,
+)
 
 
 @dataclass
@@ -181,10 +178,10 @@ class TurnAnalyzer:
         pitch_stability = max(0, 1.0 - (audio_result.features.pitch_variance / max_variance))
 
         # --- Composite Scores ---
-        fluency_score = self._calculate_fluency(
+        fluency_score = calculate_fluency(
             wpm, filler_ratio, audio_result.features.pause_count, pitch_stability
         )
-        overall_score = self._calculate_overall(
+        overall_score = calculate_overall(
             fluency_score, audio_result.confidence_score, filler_ratio
         )
 
@@ -202,7 +199,7 @@ class TurnAnalyzer:
         combined_score = combined_result.combined_score
 
         # --- Feedback Hint ---
-        feedback_hint = self._generate_feedback(
+        feedback_hint = generate_feedback(
             audio_result, filler_count, wpm, fluency_score
         )
 
@@ -333,7 +330,7 @@ class TurnAnalyzer:
         top_fillers = filler_counter.most_common(5)
 
         # Coaching summary
-        coaching_summary = self._generate_coaching_summary(
+        coaching_summary = generate_coaching_summary(
             avg_fluency, avg_confidence, avg_nervousness,
             total_fillers, confidence_trend, filler_trend, dominant_emotion,
         )
@@ -381,78 +378,3 @@ class TurnAnalyzer:
         ])
         return "\n".join(lines)
 
-    # --- Private Methods ---
-
-    def _calculate_fluency(
-        self, wpm: float, filler_ratio: float, pause_count: int, pitch_stability: float,
-    ) -> float:
-        score = 70.0  # Base
-        # WPM penalty
-        if wpm < 80 or wpm > 200:
-            score -= 15
-        elif wpm < 100 or wpm > 170:
-            score -= 5
-        # Filler penalty
-        score -= filler_ratio * 100
-        # Pause penalty
-        if pause_count > 4:
-            score -= 10
-        # Stability bonus
-        score += pitch_stability * 15
-        return max(0, min(100, score))
-
-    def _calculate_overall(
-        self, fluency: float, confidence: float, filler_ratio: float,
-    ) -> float:
-        # Weighted: Fluency 40%, Confidence 40%, Filler-free 20%
-        filler_free = max(0, 100 - filler_ratio * 200)
-        return fluency * 0.4 + confidence * 100 * 0.4 + filler_free * 0.2
-
-    def _generate_feedback(
-        self,
-        audio: AudioAnalysisResult,
-        filler_count: int,
-        wpm: float,
-        fluency: float,
-    ) -> str:
-        hints = []
-        if audio.emotion == EmotionState.NERVOUS:
-            hints.append("Take a deep breath, you're doing great")
-        if filler_count > 3:
-            hints.append("Try pausing instead of using filler words")
-        if wpm > 180:
-            hints.append("Slow down a bit for clarity")
-        elif wpm < 90:
-            hints.append("Try to speak a bit more naturally")
-        if audio.energy_level == "low":
-            hints.append("Project your voice with more energy")
-        if not hints:
-            hints.append("Good pace and clarity, keep it up!")
-        return ". ".join(hints) + "."
-
-    def _generate_coaching_summary(
-        self,
-        fluency: float, confidence: float, nervousness: float,
-        fillers: int, conf_trend: str, filler_trend: str,
-        dominant: EmotionState,
-    ) -> str:
-        parts = []
-        if dominant == EmotionState.NERVOUS:
-            parts.append("You showed signs of nervousness. Practice deep breathing before answers.")
-        elif dominant == EmotionState.CONFIDENT:
-            parts.append("Great confidence throughout! Your delivery was strong.")
-        
-        if conf_trend == "improving":
-            parts.append("Your confidence grew as the interview progressed — great job warming up!")
-        elif conf_trend == "declining":
-            parts.append("Your confidence dipped towards the end. Stay focused and trust your preparation.")
-
-        if filler_trend == "improving":
-            parts.append("Filler word usage decreased over time — excellent self-correction!")
-        elif fillers > 10:
-            parts.append(f"You used {fillers} filler words. Try replacing them with brief pauses.")
-
-        if not parts:
-            parts.append("Solid performance overall. Keep practicing to build consistency.")
-
-        return " ".join(parts)

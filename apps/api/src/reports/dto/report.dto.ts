@@ -153,6 +153,61 @@ export class BehavioralAnalysisDto {
   @ApiProperty({ enum: AnalysisLevel })
   @IsEnum(AnalysisLevel)
   clarity: AnalysisLevel;
+
+  @ApiPropertyOptional({
+    description: 'Overall candidate sentiment label derived from transcript',
+    example: 'Positive',
+  })
+  @IsOptional()
+  @IsString()
+  sentiment?: string;
+
+  @ApiPropertyOptional({
+    description: 'Normalized sentiment score in range [-1, 1]',
+    example: 0.35,
+  })
+  @IsOptional()
+  @IsNumber()
+  sentimentScore?: number;
+
+  @ApiPropertyOptional({
+    description: 'Detected speaking tone label',
+    example: 'Balanced',
+  })
+  @IsOptional()
+  @IsString()
+  tone?: string;
+
+  @ApiPropertyOptional({
+    description: 'Detected delivery mood label',
+    example: 'Steady',
+  })
+  @IsOptional()
+  @IsString()
+  mood?: string;
+
+  @ApiPropertyOptional({
+    description: 'Pronunciation clarity score out of 100',
+    example: 88,
+  })
+  @IsOptional()
+  @IsNumber()
+  pronunciationClarity?: number;
+
+  @ApiPropertyOptional({
+    description: 'Approximate hesitation marker count in candidate transcript',
+    example: 3,
+  })
+  @IsOptional()
+  @IsNumber()
+  hesitationCount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Actionable delivery coaching guidance for the candidate',
+  })
+  @IsOptional()
+  @IsString()
+  deliveryGuidance?: string;
 }
 
 // SWOT analysis

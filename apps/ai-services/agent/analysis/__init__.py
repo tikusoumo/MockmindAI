@@ -11,6 +11,7 @@ Provides:
 
 from .speech_analyzer import SpeechAnalyzer, SpeechAnalysisResult
 from .audio_analyzer import AudioAnalyzer, AudioAnalysisResult, AudioFeatures, EmotionState
+from .sentiment_analyzer import SentimentAnalyzer, SentimentSignal
 from .turn_analyzer import TurnAnalyzer, TurnMetrics, SessionSummary
 from .cv_analyzer import CVAnalyzer, CVAnalysisResult, Rating, Level, Pace
 from .semantic_analyzer import SemanticAnalyzer, SemanticAnalysisResult, SWOT, Resource
@@ -25,6 +26,8 @@ __all__ = [
     "AudioAnalysisResult",
     "AudioFeatures",
     "EmotionState",
+    "SentimentAnalyzer",
+    "SentimentSignal",
     # Turn Analysis
     "TurnAnalyzer",
     "TurnMetrics",

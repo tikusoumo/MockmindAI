@@ -453,11 +453,12 @@ export function CodeEditor({
   onExecutionRequestComplete,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme();
+  const EMPTY_EDITOR_VALUE = "";
 
   const initialLanguageId = controlledLanguage || defaultLanguage;
   const langDef = LANGUAGES.find((l) => l.id === initialLanguageId) ?? LANGUAGES[0];
   const [languageState, setLanguageState] = useState(langDef);
-  const [internalCode, setInternalCode] = useState(value ?? langDef.starter);
+  const [internalCode, setInternalCode] = useState(value ?? EMPTY_EDITOR_VALUE);
   const language =
     (controlledLanguage
       ? LANGUAGES.find((l) => l.id === controlledLanguage)
@@ -473,17 +474,17 @@ export function CodeEditor({
   const [wordWrap, setWordWrap] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const codeByLanguageRef = useRef<Record<string, string>>({
-    [langDef.id]: value ?? langDef.starter,
+    [langDef.id]: value ?? EMPTY_EDITOR_VALUE,
   });
   const handledExecutionRequestIdsRef = useRef<Set<string>>(new Set());
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
-  // When language changes preserve per-language drafts and fall back to starter templates.
+  // When language changes, preserve per-language drafts and default new languages to empty.
   const handleLanguageChange = (langId: string) => {
     codeByLanguageRef.current[language.id] = code;
 
     const def = LANGUAGES.find((l) => l.id === langId) ?? LANGUAGES[0];
-    const nextCode = codeByLanguageRef.current[def.id] ?? def.starter;
+    const nextCode = codeByLanguageRef.current[def.id] ?? EMPTY_EDITOR_VALUE;
 
     if (!controlledLanguage) {
       setLanguageState(def);
@@ -648,11 +649,11 @@ export function CodeEditor({
   }, [handleRun]);
 
   const handleReset = () => {
-    setInternalCode(language.starter);
-    codeByLanguageRef.current[language.id] = language.starter;
+    setInternalCode(EMPTY_EDITOR_VALUE);
+    codeByLanguageRef.current[language.id] = EMPTY_EDITOR_VALUE;
     setResult(null);
     setRunStatus("idle");
-    onChange?.(language.starter);
+    onChange?.(EMPTY_EDITOR_VALUE);
   };
 
   const handleCopy = () => {
@@ -762,7 +763,7 @@ export function CodeEditor({
           </Button>
 
           {/* Reset */}
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-zinc-400 hover:text-zinc-200 hover:bg-white/10" onClick={handleReset} title="Reset to starter">
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-zinc-400 hover:text-zinc-200 hover:bg-white/10" onClick={handleReset} title="Clear editor">
             <RotateCcw className="h-3.5 w-3.5" />
           </Button>
 

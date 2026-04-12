@@ -1,12 +1,12 @@
 <div align="center">
 
-# MockMind
+# MockMindAI
 
 ### AI-Powered Mock Interview Platform
 
 **Practice like it's real. Improve like it's personal.**
 
-MockMind is an intelligent mock interview platform that simulates real interview rounds — Technical, Behavioural, HR, and Machine Coding — using a live AI voice agent. It analyses your speech patterns, detects filler words, measures tone firmness and confidence, and optionally evaluates facial expressions through computer vision. After every session, you receive a detailed performance report with personalised improvement resources and a scheduled reminder system to keep you on track before your next interview.
+MockMindAI is an intelligent mock interview platform that simulates real interview rounds — Technical, Behavioural, HR, and Machine Coding — using a live AI voice agent. It analyses your speech patterns, detects filler words, measures tone firmness and confidence, and optionally evaluates facial expressions through computer vision. After every session, you receive a detailed performance report with personalised improvement resources and a scheduled reminder system to keep you on track before your next interview.
 
 ---
 

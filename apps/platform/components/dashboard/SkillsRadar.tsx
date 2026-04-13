@@ -19,22 +19,27 @@ import {
 } from "@/components/ui/card";
 import type { ReportData } from "@/data/mockData";
 import { useBackendDataState } from "@/lib/backend";
-import { fallbackReport } from "@/lib/fallback-data";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export function SkillsRadar() {
-  const { data: report, isLoading } = useBackendDataState<ReportData>(
-    "/api/reports/latest",
-    fallbackReport,
+type SkillsRadarProps = {
+  forceEmpty?: boolean;
+};
+
+export function SkillsRadar({ forceEmpty = false }: SkillsRadarProps) {
+  const { data: report, isLoading } = useBackendDataState<ReportData | null>(
+    "/api/report/latest",
+    null,
   );
+
+  const effectiveReport = forceEmpty ? null : report;
 
   const data = React.useMemo(
     () =>
-      (Array.isArray(report.radarData) ? report.radarData : []).map((item) => ({
+      (Array.isArray(effectiveReport?.radarData) ? effectiveReport.radarData : []).map((item) => ({
         ...item,
         fullMark: item.fullMark ?? 100,
       })),
-    [report.radarData],
+    [effectiveReport?.radarData],
   );
 
   return (
@@ -51,7 +56,7 @@ export function SkillsRadar() {
             <Skeleton className="h-full w-full" />
           ) : data.length === 0 ? (
             <div className="h-full w-full rounded-lg border border-dashed text-sm text-muted-foreground flex items-center justify-center">
-              No report data available yet.
+              Yet to be filled.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">

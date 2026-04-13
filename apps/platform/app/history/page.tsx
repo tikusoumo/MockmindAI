@@ -27,10 +27,12 @@ import type { PastInterview } from "@/data/mockData";
 import { useBackendDataState } from "@/lib/backend";
 import { Skeleton } from "@/components/ui/skeleton";
 
+const EMPTY_PAST_INTERVIEWS: PastInterview[] = [];
+
 export default function HistoryPage() {
   const { data: pastInterviews, isLoading } = useBackendDataState<PastInterview[]>(
     "/api/interviews/past",
-    []
+    EMPTY_PAST_INTERVIEWS
   );
 
   if (isLoading) {
@@ -82,39 +84,47 @@ export default function HistoryPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pastInterviews.map((interview) => (
-                <TableRow key={interview.id}>
-                  <TableCell className="font-medium pl-6">{interview.title}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Calendar className="h-3 w-3" />
-                      {new Date(interview.date).toLocaleDateString()}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {interview.duration}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary">{interview.type}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2 font-medium">
-                      <Trophy className={`h-3 w-3 ${interview.score >= 80 ? 'text-green-500' : 'text-yellow-500'}`} />
-                      {interview.score}%
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right pr-6">
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link href={`/report/${interview.id}`}>
-                        View Report <ExternalLink className="ml-2 h-3 w-3" />
-                      </Link>
-                    </Button>
+              {pastInterviews.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                    Yet to be filled. Your interview history will appear here after your first completed session.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                pastInterviews.map((interview) => (
+                  <TableRow key={interview.id}>
+                    <TableCell className="font-medium pl-6">{interview.title}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Calendar className="h-3 w-3" />
+                        {new Date(interview.date).toLocaleDateString()}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        {interview.duration}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{interview.type}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 font-medium">
+                        <Trophy className={`h-3 w-3 ${interview.score >= 80 ? 'text-green-500' : 'text-yellow-500'}`} />
+                        {interview.score}%
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right pr-6">
+                      <Button variant="ghost" size="sm" asChild>
+                        <Link href={`/report/${interview.id}`}>
+                          View Report <ExternalLink className="ml-2 h-3 w-3" />
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

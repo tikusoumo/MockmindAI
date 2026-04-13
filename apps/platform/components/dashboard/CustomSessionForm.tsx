@@ -7,12 +7,124 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Sparkles, UploadCloud, Save, Play, Plus, Trash2, Users } from "lucide-react";
+import { Sparkles, UploadCloud, Save, Play, Plus, Trash2 } from "lucide-react";
 import type { InterviewTemplate } from "@/data/mockData";
 import { cn } from "@/lib/utils";
 
 const MIN_HISTORY_INTERVAL_SECONDS = 5;
 const MAX_HISTORY_INTERVAL_SECONDS = 300;
+const MAX_AI_INTERVIEWERS = 4;
+
+const AI_PERSONA_OPTIONS = [
+  { value: "sarah", label: "Sarah (Friendly & Encouraging)" },
+  { value: "david", label: "David (Professional & Direct)" },
+  { value: "alex", label: "Alex (Inquisitive & Detail-oriented)" },
+  { value: "maya", label: "Maya (Leadership & Strategy)" },
+] as const;
+
+const AI_DESIGNATION_OPTIONS = [
+  "CEO",
+  "CTO",
+  "Technical Head",
+  "Engineering Manager",
+  "HR Head",
+  "Product Head",
+  "Custom",
+] as const;
+
+type AIAgentDraft = {
+  id: string;
+  persona: string;
+  designation: string;
+  customDesignation: string;
+};
+
+function normalizePersonaValue(raw: unknown): string {
+  const normalized = String(raw || "sarah").trim().toLowerCase();
+  const isKnown = AI_PERSONA_OPTIONS.some((option) => option.value === normalized);
+  return isKnown ? normalized : "sarah";
+}
+
+function createAIAgentDraft(persona: unknown = "sarah"): AIAgentDraft {
+  return {
+    id: Math.random().toString(36).slice(2, 10),
+    persona: normalizePersonaValue(persona),
+    designation: "Technical Head",
+    customDesignation: "",
+  };
+}
+
+function parseAiAgentsFromSystemPrompt(rawSystemPrompt: unknown): AIAgentDraft[] {
+  if (typeof rawSystemPrompt !== "string" || !rawSystemPrompt.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawSystemPrompt);
+    if (!parsed || typeof parsed !== "object") {
+      return [];
+    }
+
+    const rawAgents = (parsed as Record<string, unknown>).aiAgents;
+    if (!Array.isArray(rawAgents)) {
+      return [];
+    }
+
+    return rawAgents
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+
+        const record = entry as Record<string, unknown>;
+        const persona = normalizePersonaValue(record.persona);
+        const designationValue = String(record.designation || "").trim();
+        const isPreset = AI_DESIGNATION_OPTIONS.some(
+          (option) => option !== "Custom" && option === designationValue,
+        );
+
+        return {
+          id: Math.random().toString(36).slice(2, 10),
+          persona,
+          designation: isPreset ? designationValue : "Custom",
+          customDesignation: isPreset ? "" : designationValue,
+        };
+      })
+      .filter((agent): agent is AIAgentDraft => Boolean(agent))
+      .slice(0, MAX_AI_INTERVIEWERS);
+  } catch {
+    return [];
+  }
+}
+
+function buildSystemPromptWithAiAgents(
+  rawSystemPrompt: unknown,
+  aiAgents: Array<{ persona: string; designation: string }>,
+): string | undefined {
+  const basePrompt = typeof rawSystemPrompt === "string" ? rawSystemPrompt.trim() : "";
+  let payload: Record<string, unknown> = {};
+
+  if (basePrompt) {
+    try {
+      const parsed = JSON.parse(basePrompt);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        payload = parsed as Record<string, unknown>;
+      } else {
+        payload = { prompt: basePrompt };
+      }
+    } catch {
+      payload = { prompt: basePrompt };
+    }
+  }
+
+  if (aiAgents.length > 0) {
+    payload.aiAgents = aiAgents;
+  } else {
+    delete payload.aiAgents;
+  }
+
+  return Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined;
+}
 
 function normalizeHistoryInterval(raw: unknown): number {
   const parsed = Number(raw);
@@ -41,12 +153,17 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
   const [difficulty, setDifficulty] = React.useState<string>(initialData?.difficulty || "Medium");
   const [mode, setMode] = React.useState<string>(initialData?.mode || "learning");
   const [accessType, setAccessType] = React.useState<string>("link");
-  const [persona, setPersona] = React.useState<string>("sarah");
+  const [aiAgents, setAiAgents] = React.useState<AIAgentDraft[]>(() => {
+    const parsedAgents = parseAiAgentsFromSystemPrompt(initialData?.systemPrompt);
+    if (parsedAgents.length > 0) {
+      return parsedAgents;
+    }
+    return [createAIAgentDraft(initialData?.persona || "sarah")];
+  });
   const [historySnapshotIntervalSec, setHistorySnapshotIntervalSec] = React.useState<string>(
     String(normalizeHistoryInterval(initialData?.historySnapshotIntervalSec ?? 30)),
   );
 
-  const [interviewerCount, setInterviewerCount] = React.useState<string>("1");
   const [invites, setInvites] = React.useState<{email: string, role: string}[]>([]);
   const [isGlobal, setIsGlobal] = React.useState(false);
   
@@ -91,6 +208,12 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
       setType(initialData.type || "Technical");
       setDifficulty(initialData.difficulty || "Medium");
       setMode(initialData.mode || "learning");
+      const parsedAgents = parseAiAgentsFromSystemPrompt(initialData.systemPrompt);
+      if (parsedAgents.length > 0) {
+        setAiAgents(parsedAgents);
+      } else {
+        setAiAgents([createAIAgentDraft(initialData.persona || "sarah")]);
+      }
       setHistorySnapshotIntervalSec(
         String(normalizeHistoryInterval(initialData.historySnapshotIntervalSec ?? 30)),
       );
@@ -108,6 +231,48 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
     setInvites(newInvites);
   };
 
+  const addAiAgent = () => {
+    setAiAgents((prev) => {
+      if (prev.length >= MAX_AI_INTERVIEWERS) {
+        return prev;
+      }
+      return [...prev, createAIAgentDraft(prev[0]?.persona || "sarah")];
+    });
+  };
+
+  const removeAiAgent = (id: string) => {
+    setAiAgents((prev) => {
+      if (prev.length <= 1) {
+        return prev;
+      }
+      return prev.filter((agent) => agent.id !== id);
+    });
+  };
+
+  const updateAiAgent = (
+    id: string,
+    patch: Partial<Pick<AIAgentDraft, "persona" | "designation" | "customDesignation">>,
+  ) => {
+    setAiAgents((prev) =>
+      prev.map((agent) => (agent.id === id ? { ...agent, ...patch } : agent)),
+    );
+  };
+
+  const normalizedAiAgents = aiAgents
+    .map((agent) => {
+      const designation =
+        agent.designation === "Custom"
+          ? agent.customDesignation.trim() || "Custom Interviewer"
+          : agent.designation;
+      return {
+        persona: normalizePersonaValue(agent.persona),
+        designation,
+      };
+    })
+    .slice(0, MAX_AI_INTERVIEWERS);
+
+  const primaryPersona = normalizedAiAgents[0]?.persona || "sarah";
+
   const handleStart = () => {
     onStart({
       topic,
@@ -115,9 +280,10 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
       type,
       difficulty,
       mode,
-      persona,
+      persona: primaryPersona,
       accessType,
-      interviewerCount,
+      interviewerCount: String(normalizedAiAgents.length || 1),
+      aiAgents: normalizedAiAgents,
       invites,
       files: selectedFiles,
       historySnapshotIntervalSec: normalizeHistoryInterval(historySnapshotIntervalSec),
@@ -126,6 +292,11 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
 
   const handleSave = () => {
     if (onSaveTemplate) {
+      const systemPrompt = buildSystemPromptWithAiAgents(
+        initialData?.systemPrompt,
+        normalizedAiAgents,
+      );
+
       onSaveTemplate({
         id: initialData?.id || `custom-${Date.now()}`,
         title: topic,
@@ -133,10 +304,12 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
         type,
         difficulty, 
         mode,
+        persona: primaryPersona,
         accessType,
-        interviewerCount,
+        interviewerCount: String(normalizedAiAgents.length || 1),
+        aiAgents: normalizedAiAgents,
         historySnapshotIntervalSec: normalizeHistoryInterval(historySnapshotIntervalSec),
-        systemPrompt: initialData?.systemPrompt,
+        systemPrompt,
         icon: initialData?.icon || 'Sparkles',
         color: initialData?.color || 'bg-blue-500/10 text-blue-500',
         duration: initialData?.duration || '45 min'
@@ -308,18 +481,14 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
                 </Select>
               </div>
 
-              <div className="grid gap-2">
-                <Label htmlFor="persona">Interviewer Persona</Label>
-                <Select value={persona} onValueChange={setPersona}>
-                  <SelectTrigger id="persona">
-                    <SelectValue placeholder="Select persona" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="sarah">Sarah (Friendly & Encouraging)</SelectItem>
-                    <SelectItem value="david">David (Professional & Direct)</SelectItem>
-                    <SelectItem value="alex">Alex (Inquisitive & Detail-oriented)</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="grid gap-2 md:col-span-2">
+                <Label>Primary AI Interviewer</Label>
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                  {AI_PERSONA_OPTIONS.find((option) => option.value === primaryPersona)?.label || "Sarah (Friendly & Encouraging)"}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Configure each AI interviewer persona and designation in the Participants section below.
+                </p>
               </div>
 
               <div className="grid gap-2">
@@ -350,19 +519,111 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
             </div>
             
             <div className="grid gap-6">
-              <div className="grid gap-2">
-                <Label>Number of AI Interviewers</Label>
-                <Select value={interviewerCount} onValueChange={setInterviewerCount}>
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="Select number" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 Interviewer</SelectItem>
-                    <SelectItem value="2">2 Interviewers (Panel)</SelectItem>
-                    <SelectItem value="3">3 Interviewers (Panel)</SelectItem>
-                    <SelectItem value="4">4 Interviewers (Panel)</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label>AI Interviewer Panel</Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Add up to {MAX_AI_INTERVIEWERS} AI interviewers and assign a designation for each.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addAiAgent}
+                    disabled={aiAgents.length >= MAX_AI_INTERVIEWERS}
+                    className="h-8 gap-1"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add AI Agent
+                  </Button>
+                </div>
+
+                <div className="space-y-2">
+                  {aiAgents.map((agent, index) => (
+                    <div key={agent.id} className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          AI Interviewer {index + 1}
+                        </p>
+                        {aiAgents.length > 1 ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => removeAiAgent(agent.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Persona</Label>
+                          <Select
+                            value={normalizePersonaValue(agent.persona)}
+                            onValueChange={(value) =>
+                              updateAiAgent(agent.id, { persona: value })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select persona" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {AI_PERSONA_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Designation</Label>
+                          <Select
+                            value={agent.designation}
+                            onValueChange={(value) =>
+                              updateAiAgent(agent.id, {
+                                designation: value,
+                                customDesignation:
+                                  value === "Custom" ? agent.customDesignation : "",
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select designation" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {AI_DESIGNATION_OPTIONS.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {agent.designation === "Custom" ? (
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Custom Designation</Label>
+                          <Input
+                            placeholder="e.g. VP Engineering, Chief Architect"
+                            value={agent.customDesignation}
+                            onChange={(event) =>
+                              updateAiAgent(agent.id, {
+                                customDesignation: event.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div className="grid gap-2">
@@ -386,7 +647,7 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <Label>Invite Others by Email</Label>
-                  <Button variant="outline" size="sm" onClick={addInvite} className="h-8 gap-1">
+                  <Button type="button" variant="outline" size="sm" onClick={addInvite} className="h-8 gap-1">
                     <Plus className="h-3.5 w-3.5" /> Add Participant
                   </Button>
                 </div>
@@ -415,7 +676,7 @@ export function CustomSessionForm({ initialData, isAdmin = false, onStart, onSav
                         <SelectItem value="observer">Observer</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Button variant="ghost" size="icon" onClick={() => removeInvite(index)} className="text-muted-foreground hover:text-destructive">
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeInvite(index)} className="text-muted-foreground hover:text-destructive">
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>

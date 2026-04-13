@@ -30,7 +30,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { ReportData } from "@/data/mockData";
 import { backendGet, backendPost, getBackendUrl } from "@/lib/backend";
-import { fallbackReport } from "@/lib/fallback-data";
 import { toast } from "sonner";
 import {
   Radar,
@@ -257,9 +256,9 @@ function deriveQuestionsFromTranscript(
       question: entry.text,
       userAnswerSummary: nextAnswer
         ? nextAnswer.text
-        : "Candidate response could not be captured for this question.",
+        : "Yet to be filled. Candidate response could not be captured for this question.",
       aiFeedback:
-        "Detailed per-question AI feedback is unavailable for this session. Capture was partial.",
+        "Yet to be filled. Detailed per-question AI feedback is unavailable for this session.",
       score: 0,
       improvements: [
         "Re-run the interview to capture a full question-level analysis.",
@@ -359,6 +358,33 @@ function withNoCache(path: string): string {
   return `${path}${separator}_ts=${Date.now()}`;
 }
 
+function createEmptyReport(reportId = "latest"): ReportData {
+  return {
+    id: reportId,
+    date: new Date().toISOString(),
+    overallScore: 0,
+    duration: "Yet to be filled",
+    hardSkillsScore: 0,
+    softSkillsScore: 0,
+    radarData: [],
+    timelineData: [],
+    questions: [],
+    transcript: [],
+    fillerWordsAnalysis: [],
+    pacingAnalysis: [],
+    behavioralAnalysis: {} as ReportData["behavioralAnalysis"],
+    swot: {
+      strengths: [],
+      weaknesses: [],
+      opportunities: [],
+      threats: [],
+    },
+    resources: [],
+    codeHistory: [],
+    audioTracks: [],
+  };
+}
+
 function parseDownloadFileName(contentDisposition: string | null, fallback: string): string {
   if (!contentDisposition) {
     return fallback;
@@ -393,9 +419,10 @@ export default function ReportDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
+  const reportIdFallback = id === "latest" ? "latest" : id;
 
   const [openQuestion, setOpenQuestion] = useState<number | null>(null);
-  const [report, setReport] = useState<ReportData>(fallbackReport);
+  const [report, setReport] = useState<ReportData>(() => createEmptyReport(reportIdFallback));
   const [isLoading, setIsLoading] = useState(true);
   const [downloadingQuestionId, setDownloadingQuestionId] = useState<number | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
@@ -471,7 +498,7 @@ export default function ReportDetailPage() {
       })
       .catch(() => {
         if (!cancelled) {
-          setReport(fallbackReport);
+          setReport(createEmptyReport(reportIdFallback));
         }
       })
       .finally(() => {
@@ -483,7 +510,7 @@ export default function ReportDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [endpoint]);
+  }, [endpoint, reportIdFallback]);
 
   useEffect(() => {
     setAudioLoadErrorByQuestion({});
@@ -832,6 +859,35 @@ export default function ReportDetailPage() {
     ];
   }, [report.audioTracks, sharedRecordingAudioUrl]);
 
+  const hasMeaningfulReportData =
+    Number(report.overallScore) > 0 ||
+    Number(report.hardSkillsScore) > 0 ||
+    Number(report.softSkillsScore) > 0 ||
+    questions.length > 0 ||
+    normalizedTranscript.length > 0 ||
+    fillerWords.length > 0 ||
+    pacingData.length > 0 ||
+    radarData.length > 0 ||
+    timelineData.length > 0 ||
+    swot.strengths.length > 0 ||
+    swot.weaknesses.length > 0 ||
+    swot.opportunities.length > 0 ||
+    swot.threats.length > 0 ||
+    coreBehavioralEntries.length > 0 ||
+    deliveryBehavioralEntries.length > 0 ||
+    Boolean(deliveryGuidance) ||
+    resources.length > 0 ||
+    codeHistory.length > 0 ||
+    sessionAudioTracks.length > 0;
+
+  const isEmptyReport = !isAwaitingFinalReport && !hasMeaningfulReportData;
+  const reportDateLabel = new Date(report.date).toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
   const buildLocalCoachFallback = (question: string): CoachResponse => {
     const lowerQuestion = question.toLowerCase();
     const strengths = Array.isArray(swot.strengths) ? swot.strengths : [];
@@ -887,7 +943,10 @@ export default function ReportDetailPage() {
   };
 
   const handleExportPdf = async () => {
-    if (typeof window === "undefined" || isExportingPdf) {
+    if (typeof window === "undefined" || isExportingPdf || isEmptyReport) {
+      if (isEmptyReport) {
+        toast.message("Yet to be filled. Complete an interview to export a report.");
+      }
       return;
     }
 
@@ -929,6 +988,11 @@ export default function ReportDetailPage() {
   };
 
   const handleAskCoach = async () => {
+    if (isEmptyReport) {
+      toast.message("Yet to be filled. Complete an interview before asking the coach.");
+      return;
+    }
+
     const question = coachPrompt.trim();
     if (!question || isAskingCoach) {
       if (!question) {
@@ -1056,9 +1120,15 @@ export default function ReportDetailPage() {
           </Button>
           <h1 className="text-3xl font-bold tracking-tight">Interview Analysis</h1>
           <p className="text-muted-foreground">
-            Report: <span className="font-mono text-xs">{report.id}</span> &nbsp;•&nbsp;
-            {new Date(report.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} &nbsp;•&nbsp;
-            {report.duration}
+            {isEmptyReport ? (
+              "Yet to be filled. Complete an interview to generate this report."
+            ) : (
+              <>
+                Report: <span className="font-mono text-xs">{report.id || reportIdFallback}</span> &nbsp;•&nbsp;
+                {reportDateLabel} &nbsp;•&nbsp;
+                {report.duration}
+              </>
+            )}
           </p>
         </div>
         <div className="flex gap-3 print:hidden">
@@ -1066,14 +1136,15 @@ export default function ReportDetailPage() {
             variant="outline"
             className="flex"
             onClick={() => setIsCoachPanelOpen(true)}
+            disabled={isEmptyReport}
           >
             <MessageSquare className="mr-2 h-4 w-4" />
             Ask Coach
           </Button>
-          <Button variant="outline" onClick={() => void handleShareReport()} disabled={isSharingReport}>
+          <Button variant="outline" onClick={() => void handleShareReport()} disabled={isSharingReport || isEmptyReport}>
             <Share2 className="mr-2 h-4 w-4" /> {isSharingReport ? "Sharing..." : "Share"}
           </Button>
-          <Button onClick={handleExportPdf} disabled={isExportingPdf}>
+          <Button onClick={handleExportPdf} disabled={isExportingPdf || isEmptyReport}>
             <Download className="mr-2 h-4 w-4" /> {isExportingPdf ? "Preparing..." : "Export PDF"}
           </Button>
         </div>
@@ -1154,9 +1225,17 @@ export default function ReportDetailPage() {
           <CardContent className="pt-6 text-sm text-amber-700 dark:text-amber-300">
             {isPendingReport
               ? "This report is still being finalized."
-              : "This is a temporary fallback report. If a final report becomes available, it will replace this automatically."}
+              : "Report generation is taking longer than expected. Final analysis will appear automatically when ready."}
             {" "}
             Auto-refreshing every 5 seconds.
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {isEmptyReport ? (
+        <Card className="border-dashed">
+          <CardContent className="pt-6 text-sm text-muted-foreground">
+            Yet to be filled. No interview data has been captured for this report yet.
           </CardContent>
         </Card>
       ) : null}
@@ -1168,11 +1247,17 @@ export default function ReportDetailPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Overall Score</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-primary">{report.overallScore}</span>
-              <span className="text-sm text-muted-foreground">/ 100</span>
-            </div>
-            <Progress value={report.overallScore} className="h-2 mt-3" />
+            {isEmptyReport ? (
+              <p className="text-sm text-muted-foreground">Yet to be filled</p>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-bold text-primary">{report.overallScore}</span>
+                  <span className="text-sm text-muted-foreground">/ 100</span>
+                </div>
+                <Progress value={report.overallScore} className="h-2 mt-3" />
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -1180,11 +1265,17 @@ export default function ReportDetailPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Hard Skills</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">{report.hardSkillsScore}</span>
-              <span className="text-sm text-muted-foreground">/ 100</span>
-            </div>
-            <Progress value={report.hardSkillsScore} className="h-2 mt-3 bg-muted" />
+            {isEmptyReport ? (
+              <p className="text-sm text-muted-foreground">Yet to be filled</p>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-bold">{report.hardSkillsScore}</span>
+                  <span className="text-sm text-muted-foreground">/ 100</span>
+                </div>
+                <Progress value={report.hardSkillsScore} className="h-2 mt-3 bg-muted" />
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -1192,11 +1283,17 @@ export default function ReportDetailPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Soft Skills</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">{report.softSkillsScore}</span>
-              <span className="text-sm text-muted-foreground">/ 100</span>
-            </div>
-            <Progress value={report.softSkillsScore} className="h-2 mt-3 bg-muted" />
+            {isEmptyReport ? (
+              <p className="text-sm text-muted-foreground">Yet to be filled</p>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-bold">{report.softSkillsScore}</span>
+                  <span className="text-sm text-muted-foreground">/ 100</span>
+                </div>
+                <Progress value={report.softSkillsScore} className="h-2 mt-3 bg-muted" />
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1209,15 +1306,21 @@ export default function ReportDetailPage() {
             <CardDescription>Detailed analysis of your competencies</CardDescription>
           </CardHeader>
           <CardContent className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={radarData}>
-                <PolarGrid stroke="#333" />
-                <PolarAngleAxis dataKey="subject" tick={{ fill: '#888', fontSize: 12 }} />
-                <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                <Radar name="You" dataKey="A" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
-                <RechartsTooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }} />
-              </RadarChart>
-            </ResponsiveContainer>
+            {radarData.length === 0 ? (
+              <div className="flex h-full items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+                Yet to be filled.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart cx="50%" cy="50%" outerRadius="80%" data={radarData}>
+                  <PolarGrid stroke="#333" />
+                  <PolarAngleAxis dataKey="subject" tick={{ fill: '#888', fontSize: 12 }} />
+                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
+                  <Radar name="You" dataKey="A" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
+                  <RechartsTooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }} />
+                </RadarChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
 
@@ -1227,27 +1330,33 @@ export default function ReportDetailPage() {
             <CardDescription>Score and sentiment fluctuation over time</CardDescription>
           </CardHeader>
           <CardContent className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorSentiment" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                <XAxis dataKey="time" stroke="#888" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis stroke="#888" fontSize={12} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
-                <RechartsTooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }} />
-                <Legend />
-                <Area type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorScore)" name="Technical Score" />
-                <Area type="monotone" dataKey="sentiment" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#colorSentiment)" name="Confidence" />
-              </AreaChart>
-            </ResponsiveContainer>
+            {timelineData.length === 0 ? (
+              <div className="flex h-full items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+                Yet to be filled.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="colorSentiment" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                  <XAxis dataKey="time" stroke="#888" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#888" fontSize={12} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                  <RechartsTooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#fff' }} />
+                  <Legend />
+                  <Area type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorScore)" name="Technical Score" />
+                  <Area type="monotone" dataKey="sentiment" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#colorSentiment)" name="Confidence" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1268,9 +1377,9 @@ export default function ReportDetailPage() {
           {questions.length === 0 ? (
             <Card>
               <CardHeader>
-                <CardTitle>Question Analysis Unavailable</CardTitle>
+                <CardTitle>Yet to be filled</CardTitle>
                 <CardDescription>
-                  No question-level analysis was captured for this interview yet.
+                  Question-level analysis will appear after report data is captured.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -1360,7 +1469,7 @@ export default function ReportDetailPage() {
                                   ? "Audio is still being prepared. Retrying automatically..."
                                   : audioRecoveryExhausted
                                     ? "Audio processing took longer than expected. Try refreshing in a minute."
-                                  : "Audio recording is not available for this question."}
+                                  : "Yet to be filled."}
                             </div>
                           </div>
                         )}
@@ -1388,7 +1497,7 @@ export default function ReportDetailPage() {
                               ))}
                             </div>
                           ) : (
-                            <p className="text-sm text-muted-foreground">No targeted improvements available yet.</p>
+                            <p className="text-sm text-muted-foreground">Yet to be filled.</p>
                           )}
                         </div>
                       </div>
@@ -1413,7 +1522,7 @@ export default function ReportDetailPage() {
             <CardContent>
               {codeHistory.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                  Code history is not available for this report yet.
+                  Yet to be filled.
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -1536,7 +1645,7 @@ export default function ReportDetailPage() {
 
                 {sessionAudioTracks.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    User and AI audio tracks are not available yet for this report.
+                    Yet to be filled.
                   </p>
                 ) : (
                   <div className="space-y-3">
@@ -1549,7 +1658,7 @@ export default function ReportDetailPage() {
                           <audio controls preload="none" src={track.audioUrl} className="w-full" />
                         ) : (
                           <div className="text-xs text-muted-foreground">
-                            Recording is not available for this track.
+                            Yet to be filled.
                           </div>
                         )}
                       </div>
@@ -1560,7 +1669,7 @@ export default function ReportDetailPage() {
 
               {normalizedTranscript.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                  Transcript was not captured for this session.
+                  Yet to be filled.
                 </div>
               ) : (
                 normalizedTranscript.map((entry, i) => (
@@ -1594,7 +1703,7 @@ export default function ReportDetailPage() {
               <CardContent className="h-[300px]">
                 {fillerWords.length === 0 ? (
                   <div className="flex h-full items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-                    No filler-word data available for this session.
+                    Yet to be filled.
                   </div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
@@ -1618,7 +1727,7 @@ export default function ReportDetailPage() {
               <CardContent className="h-[300px]">
                 {pacingData.length === 0 ? (
                   <div className="flex h-full items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-                    Speaking pace data is unavailable for this session.
+                    Yet to be filled.
                   </div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
@@ -1650,7 +1759,7 @@ export default function ReportDetailPage() {
               </CardHeader>
               <CardContent>
                 {swot.strengths.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No strengths captured yet.</p>
+                  <p className="text-sm text-muted-foreground">Yet to be filled.</p>
                 ) : (
                   <ul className="space-y-2">
                     {swot.strengths.map((item, i) => (
@@ -1668,7 +1777,7 @@ export default function ReportDetailPage() {
               </CardHeader>
               <CardContent>
                 {swot.weaknesses.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No weaknesses captured yet.</p>
+                  <p className="text-sm text-muted-foreground">Yet to be filled.</p>
                 ) : (
                   <ul className="space-y-2">
                     {swot.weaknesses.map((item, i) => (
@@ -1686,7 +1795,7 @@ export default function ReportDetailPage() {
               </CardHeader>
               <CardContent>
                 {swot.opportunities.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No opportunities captured yet.</p>
+                  <p className="text-sm text-muted-foreground">Yet to be filled.</p>
                 ) : (
                   <ul className="space-y-2">
                     {swot.opportunities.map((item, i) => (
@@ -1704,7 +1813,7 @@ export default function ReportDetailPage() {
               </CardHeader>
               <CardContent>
                 {swot.threats.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No threats captured yet.</p>
+                  <p className="text-sm text-muted-foreground">Yet to be filled.</p>
                 ) : (
                   <ul className="space-y-2">
                     {swot.threats.map((item, i) => (
@@ -1725,8 +1834,8 @@ export default function ReportDetailPage() {
           !deliveryGuidance ? (
             <Card>
               <CardHeader>
-                <CardTitle>Behavioral Analysis Unavailable</CardTitle>
-                <CardDescription>No behavioral metrics were returned for this session.</CardDescription>
+                <CardTitle>Yet to be filled</CardTitle>
+                <CardDescription>Behavioral analysis will appear after report data is captured.</CardDescription>
               </CardHeader>
             </Card>
           ) : (
@@ -1807,8 +1916,8 @@ export default function ReportDetailPage() {
           {resources.length === 0 ? (
             <Card>
               <CardHeader>
-                <CardTitle>No Learning Resources</CardTitle>
-                <CardDescription>Resource recommendations are not available for this report.</CardDescription>
+                <CardTitle>Yet to be filled</CardTitle>
+                <CardDescription>Resource recommendations will appear after report data is captured.</CardDescription>
               </CardHeader>
             </Card>
           ) : (

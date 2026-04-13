@@ -107,6 +107,7 @@ export class AuthController {
   @UseGuards(AuthGuard('google'))
   async googleAuthRedirect(@Req() req: Request, @Res() res: Response) {
     const { token } = await this.authService.googleLogin(req);
-    res.redirect(`http://localhost:3000/auth/callback?token=${token}`);
+    const frontendBase = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    res.redirect(`${frontendBase}/auth/callback?token=${token}`);
   }
 }

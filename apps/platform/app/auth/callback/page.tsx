@@ -44,31 +44,31 @@ function CallbackContent() {
   }, [router, searchParams]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#0a0a12]">
+    <div className="relative flex min-h-screen items-center justify-center bg-background">
       {/* Ambient orb */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-32 -left-32 h-80 w-80 rounded-full bg-violet-600/20 blur-3xl" />
-        <div className="absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-indigo-600/15 blur-3xl" />
+        <div className="absolute -top-32 -left-32 h-80 w-80 rounded-full bg-violet-500/15 dark:bg-violet-600/20 blur-3xl" />
+        <div className="absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-cyan-500/15 dark:bg-indigo-600/15 blur-3xl" />
       </div>
 
-      <div className="relative flex flex-col items-center gap-5 text-center">
-        <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 grid place-items-center shadow-lg shadow-violet-900/50">
+      <div className="relative flex flex-col items-center gap-5 rounded-2xl border bg-card/80 px-8 py-10 text-center shadow-lg backdrop-blur">
+        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-linear-to-br from-violet-600 to-indigo-600 shadow-lg shadow-violet-900/30">
           <ShieldCheck className="h-7 w-7 text-white" />
         </div>
 
         {status === "loading" ? (
           <>
-            <div className="h-7 w-7 rounded-full border-2 border-violet-400 border-t-transparent animate-spin" />
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             <div>
-              <p className="text-base font-semibold text-white">Completing sign-in…</p>
-              <p className="text-sm text-zinc-500 mt-1">Storing your session securely.</p>
+              <p className="text-base font-semibold text-foreground">Completing sign-in…</p>
+              <p className="mt-1 text-sm text-muted-foreground">Storing your session securely.</p>
             </div>
           </>
         ) : (
           <>
             <div>
               <p className="text-base font-semibold text-rose-400">Something went wrong</p>
-              <p className="text-sm text-zinc-500 mt-1">Redirecting back to login…</p>
+              <p className="mt-1 text-sm text-muted-foreground">Redirecting back to login…</p>
             </div>
           </>
         )}

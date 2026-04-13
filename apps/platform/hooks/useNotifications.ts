@@ -2,10 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
-import { jwtDecode } from "jwt-decode";
 import { toast } from "sonner";
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
+function getStoredToken(): string | null {
+  return localStorage.getItem("auth_token") || localStorage.getItem("token");
+}
 
 export interface Notification {
   id: string;
@@ -24,7 +27,7 @@ export function useNotifications() {
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const token = localStorage.getItem("token");
+      const token = getStoredToken();
       if (!token) return;
       const res = await fetch(`${API_BASE}/api/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -37,14 +40,17 @@ export function useNotifications() {
   }, []);
 
   const connect = useCallback(() => {
-    const token = localStorage.getItem("token");
+    const token = getStoredToken();
     if (!token) return;
     
     // Connect to WebSocket gateway
     // NOTE: If your api server runs on WS vs WSS you need to handle that, 
     // relying on the same origin/host
     const socketInstance = io(API_BASE, {
-      auth: { token }
+      auth: { token },
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1500,
+      timeout: 5000,
     });
 
     socketInstance.on('connect', () => {
@@ -72,7 +78,7 @@ export function useNotifications() {
     return () => {
       socketInstance.disconnect();
     };
-  }, [fetchNotifications, toast]);
+  }, [fetchNotifications]);
 
   useEffect(() => {
     const cleanup = connect();
@@ -84,7 +90,7 @@ export function useNotifications() {
 
   const markAsRead = async (id: string) => {
     try {
-      const token = localStorage.getItem("token");
+      const token = getStoredToken();
       await fetch(`${API_BASE}/api/notifications/${id}/read`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}` }
@@ -96,7 +102,7 @@ export function useNotifications() {
 
   const markAllAsRead = async () => {
     try {
-      const token = localStorage.getItem("token");
+      const token = getStoredToken();
       await fetch(`${API_BASE}/api/notifications/read-all`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}` }

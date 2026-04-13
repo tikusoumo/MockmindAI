@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { NotificationsGateway } from './notifications.gateway';
 
@@ -12,12 +13,28 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     private readonly gateway: NotificationsGateway,
   ) {
+    const smtpUser =
+      process.env.SMTP_USER ||
+      process.env.SMTP_USERNAME ||
+      process.env.MAIL_USER;
+    const smtpPass =
+      process.env.SMTP_PASSWORD ||
+      process.env.SMTP_PASS ||
+      process.env.MAIL_PASSWORD;
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpPort = Number.parseInt(String(process.env.SMTP_PORT || ''), 10);
+    const hasHostConfig = Boolean(smtpHost && Number.isFinite(smtpPort));
+
     this.transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASSWORD,
-      },
+      ...(hasHostConfig
+        ? {
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpPort === 465,
+          }
+        : { service: 'gmail' }),
+      auth:
+        smtpUser && smtpPass ? { user: smtpUser, pass: smtpPass } : undefined,
     });
   }
 
@@ -30,21 +47,63 @@ export class NotificationsService {
     );
   }
 
+  async sendScheduleInviteEmail(params: {
+    email: string;
+    name?: string;
+    title: string;
+    interviewer: string;
+    scheduledAt: Date;
+    durationMinutes: number;
+    scheduleLink: string;
+    assessmentLink: string;
+  }) {
+    const htmlContent = this.getScheduleInviteTemplate(params);
+    return this.sendEmail(
+      params.email,
+      `Scheduled: ${params.title} (${params.durationMinutes} mins)`,
+      htmlContent,
+    );
+  }
+
   async sendEmail(to: string, subject: string, html: string) {
     try {
-      if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+      const smtpUser =
+        process.env.SMTP_USER ||
+        process.env.SMTP_USERNAME ||
+        process.env.MAIL_USER;
+      const smtpPass =
+        process.env.SMTP_PASSWORD ||
+        process.env.SMTP_PASS ||
+        process.env.MAIL_PASSWORD;
+      if (!smtpUser || !smtpPass) {
         this.logger.warn(
-          `SMTP credentials not configured. Mock sending email to ${to}`,
+          `SMTP credentials not configured (expected SMTP_USER/SMTP_PASS variants). Mock sending email to ${to}`,
         );
         return;
       }
-      await this.transporter.sendMail({
-        from: '"MockMind AI" <' + process.env.SMTP_USER + '>',
+      const info = await this.transporter.sendMail({
+        from: process.env.SMTP_FROM || '"MockMind AI" <' + smtpUser + '>',
         to,
         subject,
         html,
       });
-      this.logger.log(`Email sent to ${to}`);
+
+      const accepted = Array.isArray(info.accepted)
+        ? info.accepted.filter(Boolean)
+        : [];
+      const rejected = Array.isArray(info.rejected)
+        ? info.rejected.filter(Boolean)
+        : [];
+
+      this.logger.log(
+        `Email SMTP result for ${to}: accepted=${accepted.length}, rejected=${rejected.length}, messageId=${info.messageId || 'n/a'}`,
+      );
+
+      if (accepted.length === 0) {
+        throw new BadRequestException(
+          `SMTP accepted no recipients. Rejected: ${rejected.join(', ') || 'unknown'}`,
+        );
+      }
     } catch (error) {
       this.logger.error(`Error sending email to ${to}`, error);
       throw new BadRequestException('Could not send mail');
@@ -58,7 +117,7 @@ export class NotificationsService {
     type: string,
     title: string,
     body: string,
-    metadata: any = {},
+    metadata: Prisma.InputJsonValue = {},
   ) {
     const notification = await this.prisma.notification.create({
       data: {
@@ -136,21 +195,23 @@ export class NotificationsService {
     const delay = runAt.getTime() - now.getTime();
 
     if (delay > 0) {
-      setTimeout(async () => {
-        try {
-          await this.createNotification(
-            userId,
-            'schedule_reminder',
-            'Upcoming Session Reminder',
-            `Your session "${title}" is starting in 30 minutes.`,
-            { sessionId },
-          );
-        } catch (error) {
-          this.logger.error(
-            `Failed to send schedule reminder for session ${sessionId}`,
-            error,
-          );
-        }
+      setTimeout(() => {
+        void (async () => {
+          try {
+            await this.createNotification(
+              userId,
+              'schedule_reminder',
+              'Upcoming Session Reminder',
+              `Your session "${title}" is starting in 30 minutes.`,
+              { sessionId },
+            );
+          } catch (error) {
+            this.logger.error(
+              `Failed to send schedule reminder for session ${sessionId}`,
+              error,
+            );
+          }
+        })();
       }, delay);
       this.logger.log(
         `Scheduled reminder for session ${sessionId} in ${delay}ms`,
@@ -183,6 +244,51 @@ export class NotificationsService {
         <p style="color: #999; font-size: 12px; text-align: center;">
           If you didn't request this code, you can safely ignore this email.
         </p>
+      </div>
+    `;
+  }
+
+  private getScheduleInviteTemplate(params: {
+    name?: string;
+    title: string;
+    interviewer: string;
+    scheduledAt: Date;
+    durationMinutes: number;
+    scheduleLink: string;
+    assessmentLink: string;
+  }): string {
+    const scheduledDate = params.scheduledAt.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const safeName = (params.name || 'there').replace(/[<>]/g, '');
+    const safeTitle = params.title.replace(/[<>]/g, '');
+    const safeInterviewer = params.interviewer.replace(/[<>]/g, '');
+
+    return `
+      <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff;">
+        <h2 style="margin: 0 0 10px 0; color: #1f2937;">Your session is scheduled</h2>
+        <p style="margin: 0 0 16px 0; color: #4b5563;">Hi ${safeName}, your interview prep session is ready.</p>
+
+        <div style="border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #f9fafb; margin-bottom: 16px;">
+          <p style="margin: 0 0 8px 0; color: #111827; font-size: 16px;"><strong>${safeTitle}</strong></p>
+          <p style="margin: 0 0 4px 0; color: #374151;">When: ${scheduledDate}</p>
+          <p style="margin: 0 0 4px 0; color: #374151;">Duration: ${params.durationMinutes} minutes</p>
+          <p style="margin: 0; color: #374151;">Interviewer: ${safeInterviewer}</p>
+        </div>
+
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+          <a href="${params.scheduleLink}" style="display: inline-block; background: #4f46e5; color: #ffffff; text-decoration: none; padding: 10px 14px; border-radius: 8px; font-weight: 600;">Open Schedule</a>
+          <a href="${params.assessmentLink}" style="display: inline-block; background: #0f766e; color: #ffffff; text-decoration: none; padding: 10px 14px; border-radius: 8px; font-weight: 600;">Start Assessment</a>
+        </div>
+
+        <p style="margin: 12px 0 0 0; color: #6b7280; font-size: 12px;">If the buttons do not work, copy these links:</p>
+        <p style="margin: 4px 0; color: #2563eb; font-size: 12px; word-break: break-all;">${params.scheduleLink}</p>
+        <p style="margin: 4px 0; color: #0f766e; font-size: 12px; word-break: break-all;">${params.assessmentLink}</p>
       </div>
     `;
   }

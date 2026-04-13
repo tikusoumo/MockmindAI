@@ -26,9 +26,10 @@ interface NewSessionModalProps {
   templates: InterviewTemplate[];
   defaultTab?: "templates" | "custom";
   defaultSelectedTemplateId?: string;
+  launchInterviewTour?: boolean;
 }
 
-export function NewSessionModal({ children, templates, defaultTab = "templates", defaultSelectedTemplateId }: NewSessionModalProps) {
+export function NewSessionModal({ children, templates, defaultTab = "templates", defaultSelectedTemplateId, launchInterviewTour = false }: NewSessionModalProps) {
   const router = useRouter();
   const { addTemplate, updateTemplate } = useTemplates();
   const [open, setOpen] = React.useState(false);
@@ -73,6 +74,9 @@ const handleStartFromTemplate = async () => {
           const response = await backendPost<{id: string}>("/api/sessions", data);
           setStartingText("Connecting to AI Interviewer...");
           const params = new URLSearchParams({ sessionId: response.id });
+          if (launchInterviewTour) {
+            params.set("tour", "onboarding");
+          }
           if (template.historySnapshotIntervalSec) {
             params.set("historyIntervalSec", String(template.historySnapshotIntervalSec));
           }
@@ -90,6 +94,9 @@ const handleStartFromTemplate = async () => {
         template: selectedTemplateId,
         mode: "strict",
       });
+      if (launchInterviewTour) {
+        fallbackParams.set("tour", "onboarding");
+      }
       if (template?.historySnapshotIntervalSec) {
         fallbackParams.set("historyIntervalSec", String(template.historySnapshotIntervalSec));
       }
@@ -136,6 +143,9 @@ const handleStartFromTemplate = async () => {
         persona: data.persona,
         historyIntervalSec: String(data.historySnapshotIntervalSec || 30),
       });
+      if (launchInterviewTour) {
+        params.set("tour", "onboarding");
+      }
       router.push(`/interview?${params.toString()}`);
       setOpen(false);
     } catch (e) {
@@ -150,6 +160,9 @@ const handleStartFromTemplate = async () => {
         persona: data.persona,
         historyIntervalSec: String(data.historySnapshotIntervalSec || 30),
       });
+      if (launchInterviewTour) {
+        params.set("tour", "onboarding");
+      }
       router.push(`/interview?${params.toString()}`);
       setOpen(false);
     } finally {
@@ -185,7 +198,7 @@ const handleStartFromTemplate = async () => {
       <DialogTrigger asChild>
         {children}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[700px] h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-3xl h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
         {isStarting && (
           <div className="absolute inset-0 z-50 bg-background/75 backdrop-blur-sm flex items-center justify-center">
             <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-lg">

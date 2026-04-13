@@ -20,6 +20,10 @@ import { toast } from "sonner";
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
+function getAuthToken(): string | null {
+  return localStorage.getItem("auth_token") || localStorage.getItem("token");
+}
+
 const ICON_OPTIONS = ["Brain", "Code", "Users", "Zap", "Target"];
 const COLOR_OPTIONS = [
   { label: "Blue", value: "bg-blue-500" },
@@ -147,7 +151,7 @@ export default function TemplatesIndexPage() {
   const fetchCommunityTemplates = async () => {
     setLoadingCommunity(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       const res = await fetch(`${API_BASE}/api/community/templates`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -167,7 +171,7 @@ export default function TemplatesIndexPage() {
 
   const handleCloneTemplate = async (templateId: string) => {
     try {
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       const res = await fetch(`${API_BASE}/api/community/templates/${templateId}/use`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }

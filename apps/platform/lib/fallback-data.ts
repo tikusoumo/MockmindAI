@@ -50,22 +50,28 @@ export const fallbackInterviewTemplates: InterviewTemplate[] = [
 
 export const fallbackProgressStats: ProgressStat[] = [
   {
-    label: "Confidence Score",
-    value: 78,
-    change: 12,
-    history: [60, 65, 62, 70, 75, 78],
+    label: "Sessions Completed",
+    value: 0,
+    change: 0,
+    history: [],
   },
   {
-    label: "Technical Accuracy",
-    value: 85,
-    change: 5,
-    history: [70, 75, 80, 82, 84, 85],
+    label: "Average Score",
+    value: 0,
+    change: 0,
+    history: [],
   },
   {
-    label: "Communication",
-    value: 92,
-    change: 8,
-    history: [80, 82, 85, 88, 90, 92],
+    label: "Hours Practiced",
+    value: 0,
+    change: 0,
+    history: [],
+  },
+  {
+    label: "Streak Days",
+    value: 0,
+    change: 0,
+    history: [],
   },
 ];
 

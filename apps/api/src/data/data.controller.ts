@@ -65,13 +65,13 @@ export class DataController {
   }
 
   @Get('progress-stats')
-  async getProgressStats() {
-    return this.dataService.getProgressStats();
+  async getProgressStats(@Req() req: any) {
+    return this.dataService.getProgressStats(req.user.userId);
   }
 
   @Get('report/latest')
-  async getLatestReport() {
-    return this.dataService.getLatestReport();
+  async getLatestReport(@Req() req: any) {
+    return this.dataService.getLatestReport(req.user.userId, req.user.email);
   }
 
   @Get('interviews/past')

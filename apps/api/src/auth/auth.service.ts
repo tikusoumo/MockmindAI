@@ -40,7 +40,16 @@ export class AuthService {
     });
 
     try {
-      if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+      const smtpUser =
+        process.env.SMTP_USER ||
+        process.env.SMTP_USERNAME ||
+        process.env.MAIL_USER;
+      const smtpPass =
+        process.env.SMTP_PASSWORD ||
+        process.env.SMTP_PASS ||
+        process.env.MAIL_PASSWORD;
+
+      if (!smtpUser || !smtpPass) {
         console.log(`\n\n[DEV MODE] 🔑 OTP for ${email}: ${code}\n\n`);
         return { message: 'OTP generated (Check server console)' };
       }

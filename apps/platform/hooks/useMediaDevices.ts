@@ -18,8 +18,13 @@ export function useMediaDevices() {
   const getDevices = useCallback(async () => {
     try {
       // Must request permissions first to get non-redacted device labels
-      await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      const permissionProbeStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
       const devices = await navigator.mediaDevices.enumerateDevices();
+      // Release probe tracks immediately; this stream is only for permission + labels.
+      permissionProbeStream.getTracks().forEach((track) => track.stop());
       const videoDevices = devices.filter((device) => device.kind === "videoinput");
       const audioDevices = devices.filter((device) => device.kind === "audioinput");
       setCameras(videoDevices);
@@ -42,47 +47,54 @@ export function useMediaDevices() {
     let active = true;
 
     async function setupStream() {
-      // Stop existing tracks to prevent camera light staying on
+      // Recreate stream only when the selected input device changes.
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current.getTracks().forEach((track) => track.stop());
       }
-      
-      // If both disabled, don't ask for a stream
-      if (!isCameraEnabled && !isMicEnabled) {
-          setStream(null);
-          streamRef.current = null;
-          return;
-      }
-      
-      try {
-        const videoConstraints = isCameraEnabled ? (activeCameraId ? { deviceId: { exact: activeCameraId } } : true) : false;
-        const audioConstraints = isMicEnabled ? (activeMicId ? { deviceId: { exact: activeMicId } } : true) : false;
 
+      try {
         const newStream = await navigator.mediaDevices.getUserMedia({
-          video: videoConstraints,
-          audio: audioConstraints,
+          video: activeCameraId ? { deviceId: { exact: activeCameraId } } : true,
+          audio: activeMicId ? { deviceId: { exact: activeMicId } } : true,
         });
 
         if (active) {
-            setStream(newStream);
-            streamRef.current = newStream;
+          setStream(newStream);
+          streamRef.current = newStream;
         } else {
-             newStream.getTracks().forEach(track => track.stop());
+          newStream.getTracks().forEach((track) => track.stop());
         }
       } catch (err) {
         console.error("Failed to get local stream", err);
-        if (active) setStream(null);
+        if (active) {
+          setStream(null);
+          streamRef.current = null;
+        }
       }
     }
-    
-    if (activeCameraId || activeMicId || (!isCameraEnabled && !isMicEnabled)) {
-         setupStream();
+
+    if (activeCameraId || activeMicId) {
+      setupStream();
     }
 
     return () => {
-        active = false;
+      active = false;
     };
-  }, [activeCameraId, activeMicId, isCameraEnabled, isMicEnabled]);
+  }, [activeCameraId, activeMicId]);
+
+  useEffect(() => {
+    const currentStream = streamRef.current;
+    if (!currentStream) {
+      return;
+    }
+
+    currentStream.getVideoTracks().forEach((track) => {
+      track.enabled = isCameraEnabled;
+    });
+    currentStream.getAudioTracks().forEach((track) => {
+      track.enabled = isMicEnabled;
+    });
+  }, [isCameraEnabled, isMicEnabled, stream]);
 
   // Clean up completely on unmount
   useEffect(() => {

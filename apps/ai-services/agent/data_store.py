@@ -27,6 +27,7 @@ class DataStore:
     report_latest: dict[str, Any] = field(default_factory=dict)
     community_posts: list[dict[str, Any]] = field(default_factory=list)
     past_interviews: list[dict[str, Any]] = field(default_factory=list)
+    sessions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 store = DataStore(
@@ -345,3 +346,29 @@ def add_scheduled_session(payload: dict[str, Any]) -> dict[str, Any]:
     store.schedule.append(session)
     store.schedule.sort(key=lambda s: f"{s['date']} {s['time']}")
     return session
+
+
+def add_interview_session(payload: dict[str, Any]) -> dict[str, Any]:
+    session_id = str(payload.get("id") or f"req_{uuid4()}")
+    session = {
+        "id": session_id,
+        "title": payload.get("title") or "Custom Interview Session",
+        "type": payload.get("type") or "Technical",
+        "focusAreas": payload.get("focusAreas") or payload.get("description") or "",
+        "difficulty": payload.get("difficulty") or "Medium",
+        "aiBehavior": payload.get("aiBehavior") or payload.get("mode") or "learning",
+        "persona": payload.get("persona") or "Sarah",
+        "accessType": payload.get("accessType") or "link",
+        "systemPrompt": payload.get("systemPrompt"),
+        "historySnapshotIntervalSec": payload.get("historySnapshotIntervalSec") or 30,
+        "materials": payload.get("materials") or payload.get("files") or [],
+        "participants": payload.get("participants") or [],
+        "createdAt": _iso_now(),
+        "updatedAt": _iso_now(),
+    }
+    store.sessions[session_id] = session
+    return session
+
+
+def get_interview_session(session_id: str) -> dict[str, Any] | None:
+    return store.sessions.get(session_id)

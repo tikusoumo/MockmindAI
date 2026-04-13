@@ -63,6 +63,8 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     command: bun run start:prod
+    env_file:
+      - ./apps/api/.env
     volumes:
       - ./apps/api/public/recordings:/usr/src/app/apps/api/public/recordings
     environment:

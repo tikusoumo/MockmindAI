@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { backendPost, getBackendUrl, backendGet } from "@/lib/backend";
 import { Eye, EyeOff, ShieldCheck, Loader2, CheckCircle2, XCircle } from "lucide-react";
@@ -37,6 +37,25 @@ function policyPasses(password: string): boolean {
   return policyScore(password) === POLICY.length;
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error && typeof error === "object" && "message" in error) {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === "string" && maybeMessage.trim()) {
+      return maybeMessage;
+    }
+  }
+  return fallback;
+}
+
+function isAuthFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const status = (error as { status?: number }).status;
+  return status === 401 || status === 403;
+}
+
 /* ─── strength bar ───────────────────────────────────────────────────── */
 function StrengthBar({ password }: { password: string }) {
   if (!password) return null;
@@ -53,7 +72,7 @@ function StrengthBar({ password }: { password: string }) {
             key={i}
             className="h-1 flex-1 rounded-full transition-all duration-300"
             style={{
-              backgroundColor: i < score ? colors[score - 1] : "rgba(255,255,255,0.1)",
+              backgroundColor: i < score ? colors[score - 1] : "var(--border)",
             }}
           />
         ))}
@@ -77,9 +96,9 @@ function PolicyChecklist({ password }: { password: string }) {
             {ok ? (
               <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-400" />
             ) : (
-              <XCircle className="h-3 w-3 shrink-0 text-rose-400/60" />
+              <XCircle className="h-3 w-3 shrink-0 text-rose-500/70" />
             )}
-            <span className={ok ? "text-emerald-400" : "text-zinc-500"}>{rule.label}</span>
+            <span className={ok ? "text-emerald-500" : "text-muted-foreground"}>{rule.label}</span>
           </li>
         );
       })}
@@ -101,13 +120,13 @@ function PasswordInput({ show, onToggle, inputId, ...rest }: PasswordInputProps)
         id={inputId}
         type={show ? "text" : "password"}
         {...rest}
-        className={`w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 pr-10 text-sm text-white placeholder:text-zinc-500 outline-none transition-all focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 ${rest.className ?? ""}`}
+        className={`w-full rounded-lg border border-border bg-background/70 px-3 py-2.5 pr-10 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all focus:border-primary/70 focus:ring-1 focus:ring-primary/40 ${rest.className ?? ""}`}
       />
       <button
         type="button"
         onClick={onToggle}
         tabIndex={-1}
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white transition-colors"
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
         aria-label="Toggle password visibility"
       >
         {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -119,7 +138,7 @@ function PasswordInput({ show, onToggle, inputId, ...rest }: PasswordInputProps)
 /* ─── field label ────────────────────────────────────────────────────── */
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
   return (
-    <label htmlFor={htmlFor} className="block text-xs font-medium text-zinc-400 mb-1.5">
+    <label htmlFor={htmlFor} className="block text-xs font-medium text-muted-foreground mb-1.5">
       {children}
     </label>
   );
@@ -130,7 +149,7 @@ function BaseInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none transition-all focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 disabled:opacity-50 ${props.className ?? ""}`}
+      className={`w-full rounded-lg border border-border bg-background/70 px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all focus:border-primary/70 focus:ring-1 focus:ring-primary/40 disabled:opacity-50 ${props.className ?? ""}`}
     />
   );
 }
@@ -154,10 +173,10 @@ function OrDivider() {
   return (
     <div className="relative my-5">
       <div className="absolute inset-0 flex items-center">
-        <span className="w-full border-t border-white/10" />
+        <span className="w-full border-t border-border" />
       </div>
       <div className="relative flex justify-center text-[10px] uppercase tracking-widest">
-        <span className="bg-[#0f0f17] px-3 text-zinc-500">or continue with</span>
+        <span className="bg-background px-3 text-muted-foreground">or continue with</span>
       </div>
     </div>
   );
@@ -171,7 +190,7 @@ function GoogleButton() {
       onClick={() => {
         window.location.href = `${getBackendUrl()}/api/auth/google`;
       }}
-      className="w-full flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 py-2.5 text-sm text-white/80 transition-all hover:bg-white/10 hover:text-white active:scale-[0.98]"
+      className="w-full flex items-center justify-center gap-2 rounded-lg border border-border bg-background/70 py-2.5 text-sm text-foreground transition-all hover:bg-accent hover:text-accent-foreground active:scale-[0.98]"
     >
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
         <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -199,7 +218,6 @@ export default function AuthPage() {
    MAIN CONTENT
 ═════════════════════════════════════════════════════════════════════════ */
 function AuthPageContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo") || "/";
 
@@ -238,24 +256,17 @@ function AuthPageContent() {
 
     const validateToken = async () => {
       try {
-        const response = await fetch(`${getBackendUrl()}/api/user`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          cache: "no-store",
-        });
-
-        if (response.ok) {
-          if (!cancelled) {
-            window.location.replace(returnTo);
-          }
-          return;
+        await backendGet("/api/user");
+        if (!cancelled) {
+          window.location.replace(returnTo);
         }
-
-        localStorage.removeItem("auth_token");
-      } catch {
-        // Keep auth page available if backend is temporarily unreachable.
+      } catch (error) {
+        if (isAuthFailure(error)) {
+          localStorage.removeItem("auth_token");
+          localStorage.removeItem("token");
+        }
+        // Keep auth page available if backend is temporarily unreachable
+        // or the request failed for non-auth reasons.
       }
     };
 
@@ -313,8 +324,8 @@ function AuthPageContent() {
   /* ── handlers ────────────────────────────────────── */
   async function handleSendOtp() {
     if (!canSendOtp) {
-      if (!passwordPasses)  toast.error("Password doesn't meet requirements.");
-      else if (!passwordsMatch) toast.error("Passwords don't match.");
+      if (!passwordPasses)  toast.error("Password does not meet requirements.");
+      else if (!passwordsMatch) toast.error("Passwords do not match.");
       return;
     }
     setLoading(true);
@@ -322,8 +333,8 @@ function AuthPageContent() {
       await backendPost("/api/auth/send-otp", { email: signup.email });
       setOtpSent(true);
       toast.success("OTP sent to your email!");
-    } catch (err: any) {
-      toast.error(err.message || "Could not send OTP");
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Could not send OTP"));
     } finally {
       setLoading(false);
     }
@@ -339,8 +350,8 @@ function AuthPageContent() {
       await backendPost("/api/auth/forgot-password", { email: forgot.email });
       setForgotOtpSent(true);
       toast.success("OTP sent to your email!");
-    } catch (err: any) {
-      toast.error(err.message || "Could not send OTP");
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Could not send OTP"));
     } finally {
       setLoading(false);
     }
@@ -348,8 +359,8 @@ function AuthPageContent() {
 
   async function onResetSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!forgotPasswordPasses) { toast.error("New password doesn't meet requirements."); return; }
-    if (!forgotPasswordsMatch) { toast.error("Passwords don't match."); return; }
+    if (!forgotPasswordPasses) { toast.error("New password does not meet requirements."); return; }
+    if (!forgotPasswordsMatch) { toast.error("Passwords do not match."); return; }
     setLoading(true);
     try {
       await backendPost("/api/auth/reset-password", {
@@ -363,8 +374,8 @@ function AuthPageContent() {
       // Clear forgot state
       setForgot({ email: "", otp: "", newPassword: "", confirmNewPassword: "" });
       setForgotOtpSent(false);
-    } catch (err: any) {
-      toast.error(err.message || "Invalid OTP or request failed");
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Invalid OTP or request failed"));
     } finally {
       setLoading(false);
     }
@@ -380,8 +391,8 @@ function AuthPageContent() {
       localStorage.setItem("auth_token", data.token);
       toast.success("Signed in successfully!");
       window.location.replace(returnTo);
-    } catch (err: any) {
-      toast.error(err.message || "Invalid credentials");
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Invalid credentials"));
     } finally {
       setLoading(false);
     }
@@ -389,8 +400,8 @@ function AuthPageContent() {
 
   async function onSignupSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!passwordPasses) { toast.error("Password doesn't meet requirements."); return; }
-    if (!passwordsMatch) { toast.error("Passwords don't match."); return; }
+    if (!passwordPasses) { toast.error("Password does not meet requirements."); return; }
+    if (!passwordsMatch) { toast.error("Passwords do not match."); return; }
     setLoading(true);
     try {
       const data = await backendPost<AuthResponse>("/api/auth/signup", {
@@ -400,15 +411,16 @@ function AuthPageContent() {
       localStorage.setItem("auth_token", data.token);
       toast.success("Account created!");
       window.location.replace(returnTo);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const maybeError = err as { status?: number };
       // 409 Conflict = account already exists → switch to login
-      if (err?.status === 409) {
+      if (maybeError?.status === 409) {
         toast.error("Account already exists. Redirecting to login…", { duration: 3000 });
         // Pre-fill the login email for convenience
         setLogin((s) => ({ ...s, email: signup.email }));
         setTab("login");
       } else {
-        toast.error(err.message || "Invalid OTP");
+        toast.error(getErrorMessage(err, "Invalid OTP"));
       }
     } finally {
       setLoading(false);
@@ -424,32 +436,32 @@ function AuthPageContent() {
         @keyframes float-b { 0%,100%{transform:translateY(0)} 50%{transform:translateY(14px)} }
         .orb-a { animation: float-a 7s ease-in-out infinite; }
         .orb-b { animation: float-b 9s ease-in-out infinite; }
-        .auth-card { background: linear-gradient(135deg,rgba(255,255,255,0.04) 0%,rgba(255,255,255,0.01) 100%); }
-        .tab-active { background:rgba(139,92,246,0.15); color:#c4b5fd; border-bottom:2px solid #8b5cf6; }
-        .tab-inactive { color:#52525b; border-bottom:2px solid transparent; }
-        .tab-inactive:hover { color:#a1a1aa; }
+        .auth-card { background: var(--card); }
+        .tab-active { background: rgba(99,102,241,0.14); color: var(--foreground); border-bottom:2px solid rgba(99,102,241,0.8); }
+        .tab-inactive { color: var(--muted-foreground); border-bottom:2px solid transparent; }
+        .tab-inactive:hover { color: var(--foreground); }
         .glass-toast { 
-          background: rgba(139, 92, 246, 0.15) !important;
+          background: rgba(99, 102, 241, 0.18) !important;
           backdrop-filter: blur(12px) !important;
           -webkit-backdrop-filter: blur(12px) !important;
-          border: 1px solid rgba(255, 255, 255, 0.1) !important;
-          box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4) !important;
+          border: 1px solid rgba(99, 102, 241, 0.25) !important;
+          box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15) !important;
           border-radius: 12px !important;
-          color: white !important;
+          color: var(--foreground) !important;
         }
       `}</style>
 
       <div className="relative w-full max-w-5xl">
         {/* ── ambient orbs ── */}
         <div className="pointer-events-none absolute inset-0 -z-10 overflow-visible">
-          <div className="orb-a absolute -top-32 -left-32 h-80 w-80 rounded-full bg-violet-600/20 blur-3xl" />
-          <div className="orb-b absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-indigo-600/15 blur-3xl" />
+          <div className="orb-a absolute -top-32 -left-32 h-80 w-80 rounded-full bg-violet-600/12 dark:bg-violet-600/20 blur-3xl" />
+          <div className="orb-b absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-cyan-500/12 dark:bg-indigo-600/15 blur-3xl" />
           <div className="orb-a absolute top-1/2 left-1/2 h-60 w-60 -translate-x-1/2 -translate-y-1/2 rounded-full bg-purple-500/10 blur-3xl" />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* ════════════ LEFT BRAND PANEL ════════════ */}
-          <div className="auth-card hidden lg:flex flex-col justify-between rounded-2xl border border-white/8 p-10 relative overflow-hidden">
+          <div className="auth-card hidden lg:flex flex-col justify-between rounded-2xl border border-border p-10 relative overflow-hidden">
             {/* decorative grid */}
             <div className="pointer-events-none absolute inset-0"
               style={{backgroundImage:"linear-gradient(rgba(139,92,246,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(139,92,246,0.04) 1px,transparent 1px)",backgroundSize:"40px 40px"}} />
@@ -461,56 +473,55 @@ function AuthPageContent() {
                   <ShieldCheck className="h-5 w-5 text-white" />
                 </div>
                 <div>
-                  <div className="text-lg font-bold text-white tracking-tight">MockMind AI</div>
-                  <div className="text-xs text-zinc-500">Interview Coach</div>
+                  <div className="text-lg font-bold text-foreground tracking-tight">MockMind AI</div>
+                  <div className="text-xs text-muted-foreground">Interview Coach</div>
                 </div>
               </div>
 
-              <h1 className="mt-12 text-4xl font-bold tracking-tight text-white leading-tight">
+              <h1 className="mt-12 text-4xl font-bold tracking-tight text-foreground leading-tight">
                 Practice smarter.<br />
                 <span className="bg-linear-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">
                   Interview stronger.
                 </span>
               </h1>
-              <p className="mt-4 text-sm text-zinc-400 max-w-xs leading-relaxed">
+              <p className="mt-4 text-sm text-muted-foreground max-w-xs leading-relaxed">
                 Structured feedback, real-time speech analysis, and actionable coaching after every session.
               </p>
 
               {/* feature pills */}
               <div className="mt-8 flex flex-wrap gap-2">
                 {["AI Feedback", "Speech Analysis", "Skill Tracking", "Mock Interviews"].map((f) => (
-                  <span key={f} className="rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1 text-xs text-violet-300">
+                  <span key={f} className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs text-primary">
                     {f}
                   </span>
                 ))}
               </div>
             </div>
 
-            <div className="relative text-xs text-zinc-600">
+            <div className="relative text-xs text-muted-foreground">
               Tip: switch themes anytime via the header toggle.
             </div>
           </div>
 
           {/* ════════════ RIGHT AUTH CARD ════════════ */}
-          <div className="auth-card rounded-2xl border border-white/8 p-8 relative overflow-hidden"
-            style={{background:"linear-gradient(135deg,rgba(15,15,23,0.95) 0%,rgba(10,10,18,0.95) 100%)"}}>
+          <div className="auth-card rounded-2xl border border-border p-8 relative overflow-hidden">
             {/* subtle inner glow */}
             <div className="pointer-events-none absolute inset-0 rounded-2xl"
-              style={{background:"radial-gradient(600px circle at 50% 0%,rgba(139,92,246,0.06) 0%,transparent 70%)"}} />
+              style={{background:"radial-gradient(600px circle at 50% 0%,rgba(99,102,241,0.08) 0%,transparent 70%)"}} />
 
             {/* mobile logo */}
             <div className="lg:hidden flex items-center gap-2 mb-6">
               <div className="h-8 w-8 rounded-lg bg-linear-to-br from-violet-600 to-indigo-600 grid place-items-center">
                 <ShieldCheck className="h-4 w-4 text-white" />
               </div>
-              <span className="font-bold text-white">MockMind AI</span>
+              <span className="font-bold text-foreground">MockMind AI</span>
             </div>
 
             <div className="relative">
-              <h2 className="text-2xl font-bold text-white mb-1">
+              <h2 className="text-2xl font-bold text-foreground mb-1">
                 {tab === "login" ? "Welcome back" : tab === "signup" ? "Create account" : "Reset password"}
               </h2>
-              <p className="text-sm text-zinc-500 mb-6">
+              <p className="text-sm text-muted-foreground mb-6">
                 {tab === "login"
                   ? "Sign in to continue to your dashboard."
                   : tab === "signup"
@@ -519,7 +530,7 @@ function AuthPageContent() {
               </p>
 
               {/* ── tab switcher ── */}
-              <div className="flex border-b border-white/8 mb-6">
+              <div className="flex border-b border-border mb-6">
                 {tab !== "forgot-password" ? (
                   (["login", "signup"] as AuthTab[]).map((t) => (
                     <button
@@ -565,7 +576,7 @@ function AuthPageContent() {
                       <button
                         type="button"
                         onClick={() => setTab("forgot-password")}
-                        className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors"
+                        className="text-[11px] text-primary hover:text-primary/80 transition-colors"
                       >
                         Forgot password?
                       </button>
@@ -587,9 +598,9 @@ function AuthPageContent() {
                   <OrDivider />
                   <GoogleButton />
 
-                  <p className="text-[11px] text-zinc-600 text-center mt-3">
+                  <p className="text-[11px] text-muted-foreground text-center mt-3">
                     By signing in you agree to our{" "}
-                    <span className="text-violet-400 cursor-pointer hover:underline">Terms of Service</span>.
+                    <span className="text-primary cursor-pointer hover:underline">Terms of Service</span>.
                   </p>
                 </form>
               )}
@@ -625,8 +636,8 @@ function AuthPageContent() {
                         className={emailExists ? "border-rose-500/50 bg-rose-500/5" : ""}
                       />
                       {checkingEmail && (
-                        <div className="absolute right-[110px] top-1/2 -translate-y-1/2">
-                          <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
+                        <div className="absolute right-28 top-1/2 -translate-y-1/2">
+                          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                         </div>
                       )}
                       {!otpSent && (
@@ -635,7 +646,7 @@ function AuthPageContent() {
                           onClick={handleSendOtp}
                           disabled={loading || !canSendOtp || emailExists}
                           title={emailExists ? "Email already exists" : !canSendOtp ? "Fill name, email and a valid matching password first" : "Send OTP"}
-                          className="shrink-0 rounded-lg bg-violet-600/20 border border-violet-500/30 px-3 py-2 text-xs font-medium text-violet-300 transition-all hover:bg-violet-600/30 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap"
+                          className="shrink-0 rounded-lg bg-primary/10 border border-primary/30 px-3 py-2 text-xs font-medium text-primary transition-all hover:bg-primary/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap"
                         >
                           {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                           Send OTP
@@ -691,7 +702,7 @@ function AuthPageContent() {
                     />
                     {signup.confirmPassword && !passwordsMatch && (
                       <p className="text-[11px] text-rose-400 mt-1 flex items-center gap-1">
-                        <XCircle className="h-3 w-3" /> Passwords don't match
+                        <XCircle className="h-3 w-3" /> Passwords do not match
                       </p>
                     )}
                     {signup.confirmPassword && passwordsMatch && (
@@ -725,9 +736,9 @@ function AuthPageContent() {
                   <OrDivider />
                   <GoogleButton />
 
-                  <p className="text-[11px] text-zinc-600 text-center mt-3">
+                  <p className="text-[11px] text-muted-foreground text-center mt-3">
                     By signing up you agree to our{" "}
-                    <span className="text-violet-400 cursor-pointer hover:underline">Terms of Service</span>.
+                    <span className="text-primary cursor-pointer hover:underline">Terms of Service</span>.
                   </p>
                 </form>
               )}
@@ -753,7 +764,7 @@ function AuthPageContent() {
                           type="button"
                           onClick={handleSendForgotOtp}
                           disabled={loading || !canSendForgotOtp}
-                          className="shrink-0 rounded-lg bg-violet-600/20 border border-violet-500/30 px-3 py-2 text-xs font-medium text-violet-300 transition-all hover:bg-violet-600/30 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap"
+                          className="shrink-0 rounded-lg bg-primary/10 border border-primary/30 px-3 py-2 text-xs font-medium text-primary transition-all hover:bg-primary/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap"
                         >
                           {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                           Send OTP
@@ -814,7 +825,7 @@ function AuthPageContent() {
                         />
                         {forgot.confirmNewPassword && !forgotPasswordsMatch && (
                           <p className="text-[11px] text-rose-400 mt-1 flex items-center gap-1">
-                            <XCircle className="h-3 w-3" /> Passwords don't match
+                            <XCircle className="h-3 w-3" /> Passwords do not match
                           </p>
                         )}
                       </div>

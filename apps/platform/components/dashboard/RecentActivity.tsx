@@ -7,12 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { PastInterview } from "@/data/mockData";
 import { useBackendData } from "@/lib/backend";
-import { fallbackPastInterviews } from "@/lib/fallback-data";
+
+const EMPTY_PAST_INTERVIEWS: PastInterview[] = [];
 
 export function RecentActivity() {
   const pastInterviews = useBackendData<PastInterview[]>(
     "/api/interviews/past",
-    fallbackPastInterviews
+    EMPTY_PAST_INTERVIEWS
   );
 
   return (
@@ -26,36 +27,42 @@ export function RecentActivity() {
         </Button>
       </CardHeader>
       <CardContent>
-        <div className="space-y-2">
-          {pastInterviews.slice(0, 4).map((interview) => (
-            <Link
-              key={interview.id}
-              href={`/report/${interview.id}`}
-              className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 hover:border-primary/30 transition-all group"
-            >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <h4 className="font-semibold text-sm group-hover:text-primary transition-colors">{interview.title}</h4>
-                  <Badge variant={interview.score >= 80 ? "default" : interview.score >= 70 ? "secondary" : "outline"} className="text-[10px] h-4 px-1">
-                    {interview.score}%
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1">
-                    <Calendar className="h-3 w-3" />
-                    {interview.date}
+        {pastInterviews.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            No activity yet. Complete your first interview to start building history.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {pastInterviews.slice(0, 4).map((interview) => (
+              <Link
+                key={interview.id}
+                href={`/report/${interview.id}`}
+                className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 hover:border-primary/30 transition-all group"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-semibold text-sm group-hover:text-primary transition-colors">{interview.title}</h4>
+                    <Badge variant={interview.score >= 80 ? "default" : interview.score >= 70 ? "secondary" : "outline"} className="text-[10px] h-4 px-1">
+                      {interview.score}%
+                    </Badge>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {interview.duration}
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1">
+                      <Calendar className="h-3 w-3" />
+                      {interview.date}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {interview.duration}
+                    </div>
+                    <span className="capitalize">{interview.type}</span>
                   </div>
-                  <span className="capitalize">{interview.type}</span>
                 </div>
-              </div>
-              <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all shrink-0" />
-            </Link>
-          ))}
-        </div>
+                <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all shrink-0" />
+              </Link>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -1,351 +1,628 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Calendar } from "@/components/ui/calendar";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Clock, Video, Plus, CalendarIcon, Settings, CalendarDays, Zap, Trash } from "lucide-react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  CalendarDays,
+  Clock3,
+  Link2,
+  Plus,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { ScheduleBreadcrumb } from "@/components/schedule/ScheduleBreadcrumb";
+import { backendGet, backendPost } from "@/lib/backend";
 
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+type ScheduledSession = {
+  id: string;
+  title: string;
+  description?: string | null;
+  date: string;
+  time: string;
+  interviewer: string;
+  status: string;
+  googleEventId?: string | null;
+  reminderSent?: boolean;
+  isAiSuggested?: boolean;
+  category?: string;
+};
+
+type PracticeRoutine = {
+  id: string;
+  title: string;
+  frequency: string;
+  duration: number;
+  isActive: boolean;
+};
+
+type GoogleStatusResponse = {
+  connected: boolean;
+};
+
+type GoogleEventPreview = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  description?: string;
+  htmlLink?: string;
+};
+
+type AgendaItem = {
+  id: string;
+  source: "session" | "google";
+  title: string;
+  details: string;
+  start: Date;
+  end: Date;
+  sessionId?: string;
+  calendarLink?: string;
+};
+
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function toDateKey(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildMonthGrid(currentMonth: Date): Date[] {
+  const firstDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+  const weekdayIndex = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = new Date(
+    currentMonth.getFullYear(),
+    currentMonth.getMonth() + 1,
+    0,
+  ).getDate();
+  const visibleCellCount = Math.ceil((weekdayIndex + daysInMonth) / 7) * 7;
+  const gridStart = new Date(firstDay);
+  gridStart.setDate(firstDay.getDate() - weekdayIndex);
+
+  return Array.from({ length: visibleCellCount }, (_, index) => {
+    const next = new Date(gridStart);
+    next.setDate(gridStart.getDate() + index);
+    return next;
+  });
+}
+
+function monthWindow(date: Date): { start: Date; end: Date } {
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function formatClock(date: Date): string {
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 export default function SchedulePage() {
-  const [date, setDate] = useState<Date | undefined>(new Date());
-  
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [routines, setRoutines] = useState<any[]>([]);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [monthCursor, setMonthCursor] = useState(
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  );
+  const [sessions, setSessions] = useState<ScheduledSession[]>([]);
+  const [routines, setRoutines] = useState<PracticeRoutine[]>([]);
+  const [googleEvents, setGoogleEvents] = useState<GoogleEventPreview[]>([]);
   const [googleConnected, setGoogleConnected] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [routineBusy, setRoutineBusy] = useState(false);
 
-  // Form states
-  const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
-  const [newTime, setNewTime] = useState("10:00");
-  const [newCategory, setNewCategory] = useState("practice");
-  const [newDuration, setNewDuration] = useState("30");
-
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const monthKey = `${monthCursor.getFullYear()}-${monthCursor.getMonth()}`;
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
-      
-      const [sessionsRes, routinesRes, googleRes] = await Promise.all([
-        fetch(`${API_BASE}/api/schedule`, { headers }),
-        fetch(`${API_BASE}/api/schedule/routines`, { headers }),
-        fetch(`${API_BASE}/api/schedule/google/status`, { headers })
+      const { start, end } = monthWindow(monthCursor);
+      const rangeQuery = `dateStart=${encodeURIComponent(start.toISOString())}&dateEnd=${encodeURIComponent(end.toISOString())}`;
+
+      const [sessionsData, routinesData, googleStatus] = await Promise.all([
+        backendGet<ScheduledSession[]>(`/api/schedule?${rangeQuery}`),
+        backendGet<PracticeRoutine[]>("/api/schedule/routines"),
+        backendGet<GoogleStatusResponse>("/api/schedule/google/status"),
       ]);
 
-      if (sessionsRes.ok) setSessions(await sessionsRes.json());
-      if (routinesRes.ok) setRoutines(await routinesRes.json());
-      if (googleRes.ok) {
-        const { connected } = await googleRes.json();
-        setGoogleConnected(connected);
+      setSessions(Array.isArray(sessionsData) ? sessionsData : []);
+      setRoutines(Array.isArray(routinesData) ? routinesData : []);
+      setGoogleConnected(Boolean(googleStatus?.connected));
+
+      if (googleStatus?.connected) {
+        const googleEventsData = await backendGet<GoogleEventPreview[]>(
+          `/api/schedule/google/events?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
+        );
+        setGoogleEvents(Array.isArray(googleEventsData) ? googleEventsData : []);
+      } else {
+        setGoogleEvents([]);
       }
     } catch (error) {
-      console.error("Error fetching schedule data:", error);
+      console.error("Failed loading scheduler data", error);
+      toast.error("Unable to load schedule right now.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCreateSession = async () => {
-    if (!date || !newTitle) {
-      toast.error("Date and title are required.");
+  useEffect(() => {
+    void fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthKey]);
+
+  useEffect(() => {
+    const status = searchParams.get("googleCalendar");
+    if (!status) {
       return;
     }
 
-    try {
-      const token = localStorage.getItem('token');
-      
-      // Combine date and time
-      const sessionDate = new Date(date);
-      const [hours, minutes] = newTime.split(':');
-      sessionDate.setHours(parseInt(hours), parseInt(minutes), 0);
+    if (status === "connected") {
+      toast.success("Google Calendar connected successfully.");
+    }
+    if (status === "failed") {
+      toast.error("Google Calendar connection failed. Please try again.");
+    }
 
-      const res = await fetch(`${API_BASE}/api/schedule`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: newTitle,
-          date: sessionDate.toISOString(),
-          time: newTime,
-          category: newCategory,
-          duration: parseInt(newDuration),
-        })
+    router.replace("/schedule");
+    void fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, searchParams]);
+
+  const selectedDateKey = toDateKey(selectedDate);
+  const monthGrid = useMemo(() => buildMonthGrid(monthCursor), [monthCursor]);
+
+  const sessionsByDay = useMemo(() => {
+    const lookup: Record<string, ScheduledSession[]> = {};
+    for (const session of sessions) {
+      const parsed = new Date(session.date);
+      if (Number.isNaN(parsed.getTime())) {
+        continue;
+      }
+      const key = toDateKey(parsed);
+      if (!lookup[key]) {
+        lookup[key] = [];
+      }
+      lookup[key].push(session);
+    }
+
+    for (const key of Object.keys(lookup)) {
+      lookup[key].sort((a, b) => a.time.localeCompare(b.time));
+    }
+
+    return lookup;
+  }, [sessions]);
+
+  const googleByDay = useMemo(() => {
+    const lookup: Record<string, GoogleEventPreview[]> = {};
+    for (const event of googleEvents) {
+      const parsed = new Date(event.start);
+      if (Number.isNaN(parsed.getTime())) {
+        continue;
+      }
+      const key = toDateKey(parsed);
+      if (!lookup[key]) {
+        lookup[key] = [];
+      }
+      lookup[key].push(event);
+    }
+
+    for (const key of Object.keys(lookup)) {
+      lookup[key].sort(
+        (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
+      );
+    }
+
+    return lookup;
+  }, [googleEvents]);
+
+  const selectedAgenda = useMemo<AgendaItem[]>(() => {
+    const daySessions = (sessionsByDay[selectedDateKey] || []).map((session) => {
+      const start = new Date(session.date);
+      const end = new Date(start.getTime() + 45 * 60 * 1000);
+
+      return {
+        id: `session-${session.id}`,
+        source: "session",
+        title: session.title,
+        details: session.description || `${session.interviewer || "AI Coach"} session`,
+        start,
+        end,
+        sessionId: session.id,
+      };
+    });
+
+    const dayGoogle = (googleByDay[selectedDateKey] || []).map((event) => ({
+      id: `google-${event.id}`,
+      source: "google" as const,
+      title: event.title,
+      details: event.description || "Imported from Google Calendar",
+      start: new Date(event.start),
+      end: new Date(event.end),
+      calendarLink: event.htmlLink,
+    }));
+
+    return [...daySessions, ...dayGoogle].sort(
+      (a, b) => a.start.getTime() - b.start.getTime(),
+    );
+  }, [googleByDay, selectedDateKey, sessionsByDay]);
+
+  const monthlySessionCount = sessions.length;
+  const activeRoutineCount = routines.filter((routine) => routine.isActive).length;
+  const monthlyFocusHours = ((sessions.length * 45) / 60).toFixed(1);
+
+  const connectGoogleCalendar = async () => {
+    setGoogleBusy(true);
+    try {
+      const returnTo =
+        typeof window !== "undefined" ? `${window.location.origin}/schedule` : "/schedule";
+      const response = await backendGet<{ url: string }>(
+        `/api/schedule/google/connect-url?returnTo=${encodeURIComponent(returnTo)}`,
+      );
+
+      if (!response?.url) {
+        throw new Error("Missing Google OAuth URL");
+      }
+
+      window.location.assign(response.url);
+    } catch (error) {
+      console.error("Failed initiating Google connect", error);
+      toast.error("Unable to start Google Calendar connect flow.");
+      setGoogleBusy(false);
+    }
+  };
+
+  const disconnectGoogleCalendar = async () => {
+    setGoogleBusy(true);
+    try {
+      await backendPost<{ success: boolean }>("/api/schedule/google/disconnect", {});
+      toast.success("Google Calendar disconnected.");
+      await fetchData();
+    } catch (error) {
+      console.error("Failed disconnecting Google Calendar", error);
+      toast.error("Unable to disconnect Google Calendar.");
+    } finally {
+      setGoogleBusy(false);
+    }
+  };
+
+  const generateRoutine = async () => {
+    setRoutineBusy(true);
+    try {
+      await backendPost<PracticeRoutine>("/api/schedule/routines/generate", {
+        title: "AI Suggested Weekly Prep",
+        frequency: "weekly",
+        focusAreas: ["System Design", "Behavioral", "Communication"],
+        duration: 45,
       });
-
-      if (res.ok) {
-        toast.success("Session scheduled successfully.");
-        setIsNewSessionOpen(false);
-        fetchData();
-      } else {
-        throw new Error("Failed to create session");
-      }
-    } catch (e) {
-      toast.error("Could not schedule session.");
+      toast.success("New AI routine created.");
+      await fetchData();
+    } catch (error) {
+      console.error("Failed generating routine", error);
+      toast.error("Could not generate routine.");
+    } finally {
+      setRoutineBusy(false);
     }
   };
 
-  const handleDeleteSession = async (id: string) => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/api/schedule/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        toast.success("Session removed.");
-        fetchData();
-      }
-    } catch (e) {
-      console.error(e);
-    }
+  const jumpMonth = (offset: number) => {
+    const next = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + offset, 1);
+    setMonthCursor(next);
   };
 
-  const handleGenerateRoutine = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/api/schedule/routines/generate`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: "AI Suggested Weekly Prep",
-          frequency: "weekly",
-          focusAreas: ["System Design", "Behavioral"],
-          duration: 45
-        })
-      });
-      if (res.ok) {
-        toast.success("AI has built a new practice routine for you.");
-        fetchData();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const toggleGoogleCalendar = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      if (googleConnected) {
-        await fetch(`${API_BASE}/api/schedule/google/disconnect`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
-        setGoogleConnected(false);
-        toast("Google Calendar sync paused.");
-      } else {
-        // In real app, this redirects to OAuth flow. 
-        // For demo, we just simulate connecting.
-        await fetch(`${API_BASE}/api/schedule/google/connect`, { 
-          method: 'POST', 
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: { dummy: "token" } })
-        });
-        setGoogleConnected(true);
-        toast.success("Google Calendar sync active.");
-      }
-    } catch(e) {
-      console.error(e);
-    }
-  };
-
-  // Filter sessions by selected date
-  const selectedDateSessions = sessions.filter(s => {
-    if (!date) return false;
-    const sDate = new Date(s.date);
-    return sDate.getDate() === date.getDate() && sDate.getMonth() === date.getMonth() && sDate.getFullYear() === date.getFullYear();
+  const activeMonthTitle = monthCursor.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
   });
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Schedule</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage your AI practice routines and integrated calendar.
-          </p>
-        </div>
-        
-        <Dialog open={isNewSessionOpen} onOpenChange={setIsNewSessionOpen}>
-          <DialogTrigger asChild>
-            <Button><Plus className="mr-2 h-4 w-4" /> Schedule New</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Schedule Practice Session</DialogTitle>
-              <DialogDescription>Add a new session to your calendar.</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="title">Title</Label>
-                <Input id="title" value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="e.g. System Design Mock" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label>Date</Label>
-                  <Button variant="outline" className="justify-start text-left font-normal">
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {date ? date.toLocaleDateString() : <span>Pick a date</span>}
-                  </Button>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="time">Time</Label>
-                  <Input id="time" type="time" value={newTime} onChange={e => setNewTime(e.target.value)} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label>Category</Label>
-                  <Select value={newCategory} onValueChange={setNewCategory}>
-                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="practice" className="w-full">Practice</SelectItem>
-                      <SelectItem value="mock" className="w-full">Mock Interview</SelectItem>
-                      <SelectItem value="review" className="w-full">Review</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
-                  <Label>Duration (min)</Label>
-                  <Input type="number" value={newDuration} onChange={e => setNewDuration(e.target.value)} />
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsNewSessionOpen(false)}>Cancel</Button>
-              <Button onClick={handleCreateSession}>Schedule</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+    <div className="relative space-y-6 pb-24">
+      <ScheduleBreadcrumb
+        items={[
+          { label: "Home", href: "/" },
+          { label: "Schedule" },
+        ]}
+      />
 
-      <div className="grid gap-8 lg:grid-cols-[1fr_350px]">
-        {/* Left Panel: Calendar & Automations */}
-        <div className="space-y-6">
-          <Card>
-            <CardContent className="p-0 border-none shadow-none">
-              <Calendar
-                mode="single"
-                selected={date}
-                onSelect={setDate}
-                className="rounded-md border shadow-sm mx-auto p-4 flex justify-center w-full max-w-[320px]"
-              />
-            </CardContent>
-          </Card>
+      <section className="rounded-3xl border bg-[radial-gradient(circle_at_8%_12%,rgba(244,114,182,0.14),transparent_35%),radial-gradient(circle_at_82%_0%,rgba(34,197,94,0.14),transparent_32%),radial-gradient(circle_at_100%_100%,rgba(56,189,248,0.18),transparent_50%)] p-6 md:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              Planner Hub
+            </p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight">Interview Schedule</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Calendar-first planning with a larger monthly board, task subpages,
+              and Google sync.
+            </p>
+          </div>
 
-          <div className="grid gap-6 md:grid-cols-2">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center">
-                  <Zap className="w-5 h-5 mr-2 text-yellow-500" /> AI Practice Routine
-                </CardTitle>
-                <CardDescription>Let AI build your optimal schedule.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {routines.length > 0 ? (
-                  <div className="space-y-3">
-                    {routines.map(r => (
-                      <div key={r.id} className="p-3 bg-secondary/50 rounded-lg">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-semibold">{r.title}</h4>
-                          <Badge variant="outline">{r.frequency}</Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground line-clamp-2">{r.description}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground p-4 text-center border border-dashed rounded-lg">
-                    No active routines. Connect your goals to get an AI-generated weekly plan.
-                  </p>
-                )}
-              </CardContent>
-              <CardFooter>
-                <Button variant="secondary" className="w-full" onClick={handleGenerateRoutine}>
-                  Generate Routine
-                </Button>
-              </CardFooter>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center">
-                  <CalendarDays className="w-5 h-5 mr-2 text-blue-500" /> Google Calendar
-                </CardTitle>
-                <CardDescription>Two-way sync with your primary calendar.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-3 h-3 rounded-full ${googleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-                    <span className="text-sm font-medium">{googleConnected ? 'Connected' : 'Disconnected'}</span>
-                  </div>
-                </div>
-              </CardContent>
-              <CardFooter>
-                <Button variant={googleConnected ? "outline" : "default"} className="w-full" onClick={toggleGoogleCalendar}>
-                  {googleConnected ? "Disconnect Calendar" : "Connect Google Calendar"}
-                </Button>
-              </CardFooter>
-            </Card>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" asChild>
+              <Link href="/schedule/tasks">Task Workspace</Link>
+            </Button>
+            <Button asChild className="gap-2">
+              <Link href={`/schedule/tasks/new?date=${selectedDateKey}`}>
+                <Plus className="h-4 w-4" />
+                New Task
+              </Link>
+            </Button>
           </div>
         </div>
 
-        {/* Right Panel: Sessions Context */}
-        <div className="space-y-6">
-          <Card className="h-full border-l-4 border-l-primary/50">
-            <CardHeader className="bg-muted/20 border-b">
-              <CardTitle className="text-lg">
-                {date?.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Badge variant="secondary">Calendar Board</Badge>
+          <Badge variant="outline">Agenda Timeline</Badge>
+          <Badge variant="outline">Task Subpages</Badge>
+          <Badge variant="outline">Email Invite Links</Badge>
+        </div>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-[1.65fr_1fr]">
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-2xl">{activeMonthTitle}</CardTitle>
+                <CardDescription>
+                  Click a day to review sessions and open detailed task views.
+                </CardDescription>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" onClick={() => jumpMonth(-1)}>
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={() => jumpMonth(1)}>
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-3 sm:p-4">
+            <div className="mb-2 grid grid-cols-7 gap-1.5">
+              {DAY_LABELS.map((label) => (
+                <div
+                  key={label}
+                  className="rounded-lg bg-muted/50 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+              {monthGrid.map((day) => {
+                const dayKey = toDateKey(day);
+                const daySessions = sessionsByDay[dayKey] || [];
+                const dayGoogle = googleByDay[dayKey] || [];
+                const isCurrentMonth = day.getMonth() === monthCursor.getMonth();
+                const isSelected = dayKey === selectedDateKey;
+
+                return (
+                  <button
+                    key={dayKey}
+                    type="button"
+                    onClick={() => {
+                      setSelectedDate(new Date(day));
+                      if (!isCurrentMonth) {
+                        setMonthCursor(new Date(day.getFullYear(), day.getMonth(), 1));
+                      }
+                    }}
+                    className={`flex min-h-20 flex-col rounded-lg border p-2 text-left transition sm:min-h-24 sm:p-2 ${
+                      isSelected
+                        ? "border-primary bg-primary/5 shadow-sm"
+                        : "border-border bg-background hover:border-primary/50 hover:bg-muted/20"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span
+                        className={`text-xs font-semibold ${
+                          isCurrentMonth ? "text-foreground" : "text-muted-foreground"
+                        }`}
+                      >
+                        {day.getDate()}
+                      </span>
+                      {(daySessions.length > 0 || dayGoogle.length > 0) && (
+                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {daySessions.length + dayGoogle.length}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-1.5 space-y-1">
+                      {daySessions.slice(0, 1).map((session) => (
+                        <div
+                          key={session.id}
+                          className="truncate rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                        >
+                          {session.time} {session.title}
+                        </div>
+                      ))}
+
+                      {dayGoogle.slice(0, daySessions.length === 0 ? 1 : 0).map((event) => (
+                        <div
+                          key={event.id}
+                          className="truncate rounded-md bg-emerald-500/12 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+                        >
+                          {event.title}
+                        </div>
+                      ))}
+
+                      {daySessions.length + dayGoogle.length > 1 && (
+                        <div className="text-[10px] text-muted-foreground">
+                          +{daySessions.length + dayGoogle.length - 1} more
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Clock3 className="h-5 w-5 text-rose-500" />
+                Agenda for {selectedDate.toLocaleDateString()}
               </CardTitle>
-              <CardDescription>Sessions scheduled for this day.</CardDescription>
+              <CardDescription>
+                Time-ordered events from platform sessions and Google calendar.
+              </CardDescription>
             </CardHeader>
-            <CardContent className="p-4 grid gap-4">
+            <CardContent>
               {loading ? (
-                <div className="text-center py-8 text-sm text-muted-foreground">Loading...</div>
-              ) : selectedDateSessions.length > 0 ? (
-                selectedDateSessions.map((session) => (
-                  <div key={session.id} className="group flex flex-col rounded-xl border bg-card p-4 transition-all hover:border-primary/50 hover:shadow-md">
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-semibold leading-tight">{session.title}</h4>
-                      {session.isAiSuggested && <Badge variant="secondary" className="text-[10px]"><Zap className="w-3 h-3 mr-1"/> AI</Badge>}
-                    </div>
-                    
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground mt-2 bg-muted/30 p-2 rounded-md">
-                      <div className="flex items-center"><Clock className="mr-1 h-3 w-3" /> {session.time}</div>
-                      <div className="flex items-center"><Video className="mr-1 h-3 w-3" /> {session.interviewer}</div>
-                    </div>
-                    
-                    <div className="flex gap-2 mt-4 pt-4 border-t items-center justify-between">
-                      <Button variant="default" size="sm" className="w-full">Join</Button>
-                      <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => handleDeleteSession(session.id)}>
-                        <Trash className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))
+                <p className="text-sm text-muted-foreground">Loading agenda...</p>
+              ) : selectedAgenda.length === 0 ? (
+                <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                  No events on this day. Create one from the task scheduler.
+                </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl bg-muted/10 border-dashed">
-                  <div className="bg-primary/10 p-3 rounded-full mb-3 text-primary">
-                    <CalendarIcon className="h-6 w-6" />
-                  </div>
-                  <h3 className="text-sm font-semibold">No Sessions</h3>
-                  <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">Your schedule is clear for this day.</p>
-                  <Button variant="outline" size="sm" className="mt-4" onClick={() => setIsNewSessionOpen(true)}>Book a Time</Button>
+                <div className="space-y-3">
+                  {selectedAgenda.map((item) => (
+                    <div key={item.id} className="rounded-xl border bg-card p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                            {formatClock(item.start)} - {formatClock(item.end)}
+                          </p>
+                          <p className="mt-1 font-semibold">{item.title}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{item.details}</p>
+                        </div>
+                        <Badge variant={item.source === "session" ? "default" : "outline"}>
+                          {item.source === "session" ? "Session" : "Google"}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {item.sessionId && (
+                          <Button variant="outline" size="sm" asChild>
+                            <Link href={`/schedule/tasks?sessionId=${item.sessionId}`}>
+                              Open Task
+                            </Link>
+                          </Button>
+                        )}
+
+                        {item.sessionId && (
+                          <Button size="sm" asChild>
+                            <Link href={`/interview?scheduledSessionId=${item.sessionId}`}>
+                              Assessment Link
+                            </Link>
+                          </Button>
+                        )}
+
+                        {!item.sessionId && item.calendarLink && (
+                          <Button variant="outline" size="sm" asChild>
+                            <a href={item.calendarLink} target="_blank" rel="noopener noreferrer">
+                              Open Event <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
+                            </a>
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
           </Card>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Sessions</CardDescription>
+                <CardTitle className="text-2xl">{monthlySessionCount}</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Focus Hours</CardDescription>
+                <CardTitle className="text-2xl">{monthlyFocusHours}h</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Active Routines</CardDescription>
+                <CardTitle className="text-2xl">{activeRoutineCount}</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Google Sync</CardDescription>
+                <CardTitle className="text-2xl">
+                  {googleConnected ? "Linked" : "Off"}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <CalendarDays className="h-5 w-5 text-cyan-500" />
+                Calendar Actions
+              </CardTitle>
+              <CardDescription>
+                Connect Google calendar and generate AI routine sessions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {googleConnected ? (
+                <Button
+                  variant="outline"
+                  className="w-full justify-between"
+                  onClick={() => void disconnectGoogleCalendar()}
+                  disabled={googleBusy}
+                >
+                  Disconnect Google
+                  <Link2 className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button className="w-full" onClick={() => void connectGoogleCalendar()} disabled={googleBusy}>
+                  {googleBusy ? "Connecting..." : "Connect Google Calendar"}
+                </Button>
+              )}
+
+              <Button
+                variant="secondary"
+                className="w-full justify-between"
+                onClick={() => void generateRoutine()}
+                disabled={routineBusy}
+              >
+                {routineBusy ? "Generating Routine..." : "Generate AI Routine"}
+                <Sparkles className="h-4 w-4" />
+              </Button>
+            </CardContent>
+          </Card>
         </div>
-      </div>
+      </section>
+
+      <Button size="lg" className="fixed bottom-8 right-8 z-10 h-14 rounded-full px-6 shadow-lg" asChild>
+        <Link href={`/schedule/tasks/new?date=${selectedDateKey}`}>
+          <Plus className="mr-1 h-5 w-5" />
+          Schedule Task
+        </Link>
+      </Button>
     </div>
   );
 }

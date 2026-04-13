@@ -19,8 +19,6 @@ import {
   Pin,
   Maximize,
   Minimize,
-  ChevronDown,
-  ChevronUp,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -41,9 +39,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
 import type { User } from "@/data/mockData";
 import { backendPost, useBackendData } from "@/lib/backend";
 import { fallbackCurrentUser } from "@/lib/fallback-data";
@@ -103,10 +101,178 @@ function parseSystemPromptSettings(
   return {};
 }
 
+type SessionParticipant = {
+  id?: string;
+  email?: string;
+  name?: string;
+  role?: string;
+  status?: string;
+  micOn?: boolean;
+  camOn?: boolean;
+  speaking?: boolean;
+};
+
+type SessionRecord = {
+  id?: string;
+  title?: string;
+  type?: string;
+  focusAreas?: string;
+  difficulty?: string;
+  aiBehavior?: string;
+  persona?: string;
+  accessType?: string;
+  historySnapshotIntervalSec?: number;
+  systemPrompt?: string;
+  template?: {
+    systemPrompt?: string;
+  };
+  participants?: SessionParticipant[];
+};
+
+type SessionPromptAIAgent = {
+  persona: string;
+  designation: string;
+};
+
+type ModalReportSummary = {
+  id?: string;
+  overallScore?: number;
+  hardSkillsScore?: number;
+  softSkillsScore?: number;
+  highlights?: string[];
+  transcript?: Array<{ text?: string }>;
+};
+
+type InterviewParticipantCard = {
+  id: string;
+  name: string;
+  role: string;
+  avatar?: string;
+  isAI?: boolean;
+  speaking?: boolean;
+  isLocal?: boolean;
+  camOn?: boolean;
+  micOn?: boolean;
+};
+
+const INTERVIEW_TYPES: InterviewTemplate["type"][] = [
+  "Technical",
+  "Aptitude",
+  "Machine Coding",
+  "Behavioral",
+  "HR",
+  "Custom",
+];
+
+const INTERVIEW_DIFFICULTIES: InterviewTemplate["difficulty"][] = [
+  "Easy",
+  "Medium",
+  "Hard",
+];
+
+function normalizeInterviewType(
+  raw: unknown,
+  fallback: InterviewTemplate["type"] = "Technical",
+): InterviewTemplate["type"] {
+  const normalized = String(raw || "").trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (normalized === "machine coding" || normalized === "machine-coding") {
+    return "Machine Coding";
+  }
+
+  if (normalized === "hr") {
+    return "HR";
+  }
+
+  const matched = INTERVIEW_TYPES.find(
+    (value) => value.toLowerCase() === normalized,
+  );
+  return matched || fallback;
+}
+
+function normalizeDifficulty(
+  raw: unknown,
+  fallback: InterviewTemplate["difficulty"] = "Medium",
+): InterviewTemplate["difficulty"] {
+  const normalized = String(raw || "").trim().toLowerCase();
+  const matched = INTERVIEW_DIFFICULTIES.find(
+    (value) => value.toLowerCase() === normalized,
+  );
+  return matched || fallback;
+}
+
+function normalizeInterviewMode(
+  raw: unknown,
+): NonNullable<InterviewTemplate["mode"]> {
+  const normalized = String(raw || "strict").trim().toLowerCase();
+  return normalized === "learning" ? "learning" : "strict";
+}
+
+function formatPersonaDisplayName(rawPersona: unknown): string {
+  const cleaned = String(rawPersona || "Sarah")
+    .trim()
+    .replace(/[\-_]+/g, " ");
+  if (!cleaned) {
+    return "Sarah";
+  }
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function parseAiAgentsFromSystemPrompt(
+  rawSystemPrompt: unknown,
+): SessionPromptAIAgent[] {
+  if (typeof rawSystemPrompt !== "string" || !rawSystemPrompt.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawSystemPrompt);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return [];
+    }
+
+    const rawAgents = (parsed as Record<string, unknown>).aiAgents;
+    if (!Array.isArray(rawAgents)) {
+      return [];
+    }
+
+    return rawAgents
+      .map((entry, index) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return null;
+        }
+
+        const record = entry as Record<string, unknown>;
+        const persona = String(record.persona || "sarah").trim().toLowerCase() || "sarah";
+        const designation =
+          String(record.designation || "").trim() || `Panel Interviewer ${index + 1}`;
+
+        return { persona, designation };
+      })
+      .filter((entry): entry is SessionPromptAIAgent => Boolean(entry))
+      .slice(0, 4);
+  } catch {
+    return [];
+  }
+}
+
 export default function InterviewPage() {
   return (
     <div className="flex flex-col min-h-[calc(100vh-8rem)] w-full relative group">
-      <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>}>
+      <Suspense
+        fallback={
+          <div className="flex min-h-[calc(100vh-8rem)] w-full items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        }
+      >
         <InterviewPageContent />
       </Suspense>
     </div>
@@ -125,12 +291,12 @@ function InterviewPageContent() {
     persistedSessionId || `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
   );
 
-  const [sessionDbData, setSessionDbData] = useState<any>(null);
+  const [sessionDbData, setSessionDbData] = useState<SessionRecord | null>(null);
 
   useEffect(() => {
      if (persistedSessionId) {
          import("@/lib/backend").then(({ backendGet }) => {
-             backendGet(`/api/sessions/${persistedSessionId}`)
+             backendGet<SessionRecord>(`/api/sessions/${persistedSessionId}`)
                .then(setSessionDbData)
                .catch(console.error);
          });
@@ -183,10 +349,16 @@ function InterviewPageContent() {
   const dummyTemplate: InterviewTemplate = {
     id: templateId || "dummy",
     title: sessionDbData?.title || customTitle || "Tech Round: React & System Design",
-    type: (effectiveType as any) || (isCodingRound ? "Machine Coding" : "Technical"),
-    mode: effectiveMode as any,
+    type: normalizeInterviewType(
+      effectiveType,
+      isCodingRound ? "Machine Coding" : "Technical",
+    ),
+    mode: normalizeInterviewMode(effectiveMode),
     duration: "45 mins",
-    difficulty: sessionDbData?.difficulty || (searchParams.get("difficulty") as any) || "Medium",
+    difficulty: normalizeDifficulty(
+      sessionDbData?.difficulty || searchParams.get("difficulty"),
+      "Medium",
+    ),
     questions: [],
     description: effectiveDescription,
     icon: isCodingRound ? "Code" : "Sparkles",
@@ -196,7 +368,6 @@ function InterviewPageContent() {
 
   const [liveKitToken, setLiveKitToken] = useState<string>("");
   const [liveKitUrl, setLiveKitUrl] = useState<string>("");
-  const [error, setError] = useState<string>("");
 
   useEffect(() => {
      let mounted = true;
@@ -225,7 +396,7 @@ function InterviewPageContent() {
               setLiveKitToken(data.token);
               setLiveKitUrl(data.url);
            }
-        }).catch((err) => {
+        }).catch(() => {
            // We suppress LiveKit token errors for now so we can still view the Dummy UI!
            if (mounted) {
                console.warn("LiveKit offline. Rendering dummy UI mode.");
@@ -250,7 +421,7 @@ function InterviewPageContent() {
   ]);
 
   if (!liveKitToken) {
-     return <div className="flex flex-col h-full items-center justify-center gap-4 text-center">
+      return <div className="flex min-h-[calc(100vh-8rem)] w-full flex-col items-center justify-center gap-4 text-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         <div className="flex flex-col gap-1">
            <h3 className="font-semibold text-lg text-foreground">Preparing AI Interviewer</h3>
@@ -270,6 +441,7 @@ function InterviewPageContent() {
               sessionDbData={sessionDbData}
               sessionId={effectiveSessionId}
               historySnapshotIntervalSec={historySnapshotIntervalSec}
+              tourMode={searchParams.get("tour")}
             />
           </div>
       );
@@ -291,6 +463,7 @@ function InterviewPageContent() {
         sessionDbData={sessionDbData}
         sessionId={effectiveSessionId}
         historySnapshotIntervalSec={historySnapshotIntervalSec}
+        tourMode={searchParams.get("tour")}
       />
       <RoomAudioRenderer />
     </LiveKitRoom>
@@ -304,23 +477,48 @@ function InterviewSession({
   sessionDbData,
   sessionId,
   historySnapshotIntervalSec,
+  tourMode,
 }: {
   currentUser: User;
   template?: InterviewTemplate;
   isDummyMode: boolean;
-  sessionDbData?: any;
+  sessionDbData?: SessionRecord | null;
   sessionId?: string;
   historySnapshotIntervalSec?: number;
+  tourMode?: string | null;
 }) {
   const router = useRouter();
   const reportLookupId = sessionId || template?.id || "latest";
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [sessionNotes, setSessionNotes] = useState("");
+  const [isWorkflowTourOpen, setIsWorkflowTourOpen] = useState(false);
+  const [workflowTourStep, setWorkflowTourStep] = useState(0);
+  const [workflowTourRect, setWorkflowTourRect] = useState<DOMRect | null>(null);
 
   const [chatMessages, setChatMessages] = useState<{name: string, text: string, time: string}[]>([
       { name: "System", text: "Welcome to the interview session. Multiple participants can join.", time: "10:00 AM" }
   ]);
   const [chatInput, setChatInput] = useState("");
+
+  const workflowTourStorageKey = useMemo(() => {
+    const identitySource = currentUser as User & {
+      id?: number;
+      email?: string;
+    };
+    const identity =
+      typeof identitySource.id === "number"
+        ? `id-${identitySource.id}`
+        : identitySource.email
+          ? `email-${identitySource.email}`
+          : `name-${currentUser?.name || "user"}`;
+    return `platform-interview-workflow-tour:v1:${identity}`;
+  }, [currentUser]);
+
+  const notesStorageKey = useMemo(() => {
+    return `platform-session-notes:v1:${reportLookupId}`;
+  }, [reportLookupId]);
 
   const effectiveType = sessionDbData?.type || template?.type;
   const normalizedEffectiveType = String(effectiveType || "").trim().toLowerCase();
@@ -346,6 +544,86 @@ function InterviewSession({
   const effectiveHistorySnapshotIntervalSec =
     parseHistorySnapshotInterval(historySnapshotIntervalSec) ??
     DEFAULT_HISTORY_SNAPSHOT_INTERVAL_SECONDS;
+
+  const workflowTourSteps = useMemo(() => {
+    const steps = [
+      {
+        key: "ai-agent",
+        target: "[data-tour='ai-agent-card']",
+        title: "This is your AI interviewer",
+        description:
+          "This panel shows the AI interviewer state while it speaks and listens.",
+      },
+      {
+        key: "media-controls",
+        target: "[data-tour='media-controls']",
+        title: "Control camera and microphone",
+        description:
+          "Toggle mic/camera instantly and select the exact input devices from dropdowns.",
+      },
+      {
+        key: "notes",
+        target: "[data-tour='session-notes-trigger']",
+        title: "Take live notes",
+        description:
+          "Use notes to track key follow-ups and talking points during the interview.",
+      },
+      {
+        key: "invite",
+        target: "[data-tour='invite-users-trigger']",
+        title: "Invite collaborators",
+        description:
+          "Invite people by email or copy a session link for observers/interviewers.",
+      },
+    ];
+
+    if (isCodingRound) {
+      steps.splice(1, 0, {
+        key: "editor",
+        target: "[data-tour='code-editor-pane']",
+        title: "This is the live code editor",
+        description:
+          "Write, run, and iterate your code here while the AI evaluates your approach.",
+      });
+    }
+
+    return steps;
+  }, [isCodingRound]);
+
+  useEffect(() => {
+    try {
+      const existingNotes = window.localStorage.getItem(notesStorageKey) || "";
+      setSessionNotes(existingNotes);
+    } catch {
+      // Ignore storage access failures.
+    }
+  }, [notesStorageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(notesStorageKey, sessionNotes);
+    } catch {
+      // Ignore storage access failures.
+    }
+  }, [notesStorageKey, sessionNotes]);
+
+  useEffect(() => {
+    let shouldOpenTour = tourMode === "onboarding";
+    try {
+      const hasSeenTour =
+        window.localStorage.getItem(workflowTourStorageKey) === "completed";
+      if (!hasSeenTour) {
+        shouldOpenTour = true;
+      }
+    } catch {
+      // Ignore storage access failures.
+    }
+
+    if (shouldOpenTour) {
+      setWorkflowTourStep(0);
+      setIsWorkflowTourOpen(true);
+    }
+  }, [tourMode, workflowTourStorageKey]);
 
   useEffect(() => {
     codeRef.current = code;
@@ -901,7 +1179,7 @@ function InterviewSession({
 
   // --- Session End / Report Modal ---
   const [showReportModal, setShowReportModal] = useState(false);
-  const [modalReportData, setModalReportData] = useState<any>(null);
+  const [modalReportData, setModalReportData] = useState<ModalReportSummary | null>(null);
   const [isLoadingReport, setIsLoadingReport] = useState(false);
 
   useEffect(() => {
@@ -944,11 +1222,7 @@ function InterviewSession({
 
       const pollInterval = window.setInterval(() => {
         import("@/lib/backend").then(({ backendGet }) => {
-          backendGet<{
-            id?: string;
-            overallScore?: number;
-            transcript?: Array<{ text?: string }>;
-          }>(`/api/reports/${reportLookupId}`)
+          backendGet<ModalReportSummary>(`/api/reports/${reportLookupId}`)
             .then((data) => {
               const isPendingReport = String(data?.id || "").startsWith("rep_pending");
               const isTimeoutFallback = isTimeoutFallbackReport(data);
@@ -994,93 +1268,245 @@ function InterviewSession({
     }
   }, [reportLookupId, showReportModal]);
 
-  const fallbackInterviewers = [
-      { id: "ai-1", name: "Sarah (Lead)", role: "AI Agent", avatar: "https://i.pravatar.cc/150?u=sarah", speaking: isAgentSpeaking, isAI: true },
-      { id: "hm-1", name: "David Chen", role: "Manager", avatar: "https://i.pravatar.cc/150?u=david", speaking: false, isAI: false },
-  ];
+  const aiAgentsFromPrompt = parseAiAgentsFromSystemPrompt(
+    sessionDbData?.systemPrompt,
+  );
+  const fallbackPersona = sessionDbData?.persona || template?.persona || "Sarah";
 
-  const fallbackCandidates = [
-      { id: "self", name: currentUser?.name || "You", role: "Candidate", avatar: currentUser?.avatar, isLocal: true, camOn: isCameraEnabled, micOn: isMicEnabled },
-      { id: "peer-1", name: "Eliza (Pairing)", role: "Candidate", avatar: "https://i.pravatar.cc/150?u=eliza", isLocal: false, camOn: true, micOn: false },
-  ];
+  const isSyntheticAiParticipant = (participant: SessionParticipant) =>
+    String(participant.email || "").trim().toLowerCase().startsWith("ai-agent+");
 
-  let interviewers, candidates;
+  const toAiInterviewerCard = (
+    agent: SessionPromptAIAgent,
+    index: number,
+  ): InterviewParticipantCard => {
+    const displayName = formatPersonaDisplayName(agent.persona);
+    const designation =
+      String(agent.designation || "").trim() || `Panel Interviewer ${index + 1}`;
+    const name = `${displayName} (${designation})`;
+    const avatarSeed = `${agent.persona}-${designation}-${index + 1}`.toLowerCase();
 
-  if (sessionDbData && sessionDbData.participants) {
+    return {
+      id: `ai-agent-${index + 1}`,
+      name,
+      role: "Interviewer",
+      avatar: `https://i.pravatar.cc/150?u=${avatarSeed}`,
+      speaking: index === 0 ? isAgentSpeaking : false,
+      isAI: true,
+    };
+  };
+
+  let interviewers: InterviewParticipantCard[];
+  let candidates: InterviewParticipantCard[];
+
+  if (Array.isArray(sessionDbData?.participants) && sessionDbData.participants.length > 0) {
+    const sessionParts = sessionDbData.participants;
+
+    const aiPanelInterviewers = sessionParts.filter((participant) => {
+      const roleNormalized = String(participant?.role || "").toLowerCase();
+      return roleNormalized === "interviewer" && isSyntheticAiParticipant(participant);
+    });
+
+    if (aiPanelInterviewers.length > 0) {
+      interviewers = aiPanelInterviewers.map((participant, index) => ({
+        id: participant.id || `ai-${index + 1}`,
+        name:
+          participant.name ||
+          `${formatPersonaDisplayName(sessionDbData?.persona)} (AI Interviewer)`,
+        role: participant.role || "AI Interviewer",
+        avatar: `https://i.pravatar.cc/150?u=${String(
+          participant.name || participant.email || `ai-${index + 1}`,
+        ).toLowerCase()}`,
+        speaking: index === 0 ? isAgentSpeaking : false,
+        isAI: true,
+      }));
+    } else if (aiAgentsFromPrompt.length > 0) {
+      interviewers = aiAgentsFromPrompt.map(toAiInterviewerCard);
+    } else {
       interviewers = [
-          { id: "ai-1", name: `${sessionDbData?.persona || 'Sarah'} (Lead)`, role: "AI Agent", avatar: `https://i.pravatar.cc/150?u=${sessionDbData?.persona?.toLowerCase() || 'sarah'}`, speaking: isAgentSpeaking, isAI: true }
+        {
+          id: "ai-1",
+          name: `${formatPersonaDisplayName(fallbackPersona)} (Lead)`,
+          role: "AI Agent",
+          avatar: `https://i.pravatar.cc/150?u=${String(fallbackPersona).toLowerCase()}`,
+          speaking: isAgentSpeaking,
+          isAI: true,
+        },
       ];
-      
-      const sessionParts = sessionDbData.participants || [];
+    }
 
-      sessionParts.forEach((p: any) => {
-          const roleNormalized = p.role?.toLowerCase() || '';
-          if (roleNormalized === 'interviewer' || roleNormalized === 'observer') {
-              interviewers.push({
-                  id: p.id,
-                  name: p.name || p.email?.split('@')[0] || "Unknown",
-                  role: p.role,
-                  avatar: `https://i.pravatar.cc/150?u=${p.email}`,
-                  speaking: false,
-                  isAI: false
-              });
-          }
-      });
+    sessionParts.forEach((participant) => {
+      const roleNormalized = String(participant?.role || "").toLowerCase();
+      if (
+        (roleNormalized === "interviewer" || roleNormalized === "observer") &&
+        !isSyntheticAiParticipant(participant)
+      ) {
+        interviewers.push({
+          id: participant.id || `human-${participant.email || Math.random().toString(36).slice(2, 6)}`,
+          name:
+            participant.name ||
+            String(participant.email || "").split("@")[0] ||
+            "Unknown",
+          role: participant.role || "Observer",
+          avatar: `https://i.pravatar.cc/150?u=${participant.email || participant.name || "participant"}`,
+          speaking: false,
+          isAI: false,
+        });
+      }
+    });
 
-      candidates = [
-          { id: "self", name: currentUser?.name || "You", role: "Candidate", avatar: currentUser?.avatar, isLocal: true, camOn: isCameraEnabled, micOn: isMicEnabled }
-      ];
-      
-      sessionParts.forEach((p: any) => {
-          const roleNormalized = p.role?.toLowerCase() || '';
-          if (roleNormalized === 'candidate' && p.email !== (currentUser as any)?.email) {
-              candidates.push({
-                  id: p.id,
-                  name: p.name || p.email?.split('@')[0] || "Unknown",
-                  role: p.role,
-                  avatar: `https://i.pravatar.cc/150?u=${p.email}`,
-                  isLocal: false,
-                  camOn: true,
-                  micOn: false
-              });
-          }
-      });
+    candidates = [
+      {
+        id: "self",
+        name: currentUser?.name || "You",
+        role: "Candidate",
+        avatar: currentUser?.avatar,
+        isLocal: true,
+        camOn: isCameraEnabled,
+        micOn: isMicEnabled,
+      },
+    ];
+
+    const currentUserProfile = currentUser as User & { email?: string };
+    const currentUserEmail = String(currentUserProfile.email || "").trim().toLowerCase();
+    const currentUserName = String(currentUser?.name || "").trim().toLowerCase();
+
+    sessionParts.forEach((participant) => {
+      const roleNormalized = String(participant?.role || "").toLowerCase();
+      const participantEmail = String(participant.email || "").trim().toLowerCase();
+      const participantName = String(participant.name || "").trim().toLowerCase();
+      const isCurrentUserParticipant =
+        participant.id === "self" ||
+        (currentUserEmail
+          ? participantEmail === currentUserEmail
+          : participantName === currentUserName);
+
+      if (roleNormalized === "candidate" && !isCurrentUserParticipant) {
+        candidates.push({
+          id:
+            participant.id ||
+            `cand-${participant.email || Math.random().toString(36).slice(2, 6)}`,
+          name:
+            participant.name ||
+            String(participant.email || "").split("@")[0] ||
+            "Unknown",
+          role: participant.role || "Candidate",
+          avatar: `https://i.pravatar.cc/150?u=${participant.email || participant.name || "candidate"}`,
+          isLocal: false,
+          camOn: true,
+          micOn: false,
+        });
+      }
+    });
   } else {
-      // Dynamic rendering directly from templates instead of the static 4 users
-      const personaName = sessionDbData?.persona || template?.persona || "Sarah";
+    if (aiAgentsFromPrompt.length > 0) {
+      interviewers = aiAgentsFromPrompt.map(toAiInterviewerCard);
+    } else {
       interviewers = [
-          { id: "ai-1", name: `${personaName} (Lead)`, role: "AI Agent", avatar: `https://i.pravatar.cc/150?u=${personaName.toLowerCase()}`, speaking: isAgentSpeaking, isAI: true }
+        {
+          id: "ai-1",
+          name: `${formatPersonaDisplayName(fallbackPersona)} (Lead)`,
+          role: "AI Agent",
+          avatar: `https://i.pravatar.cc/150?u=${String(fallbackPersona).toLowerCase()}`,
+          speaking: isAgentSpeaking,
+          isAI: true,
+        },
       ];
-      candidates = [
-          { id: "self", name: currentUser?.name || "You", role: "Candidate", avatar: currentUser?.avatar, isLocal: true, camOn: isCameraEnabled, micOn: isMicEnabled }
-      ];
+    }
+
+    candidates = [
+      {
+        id: "self",
+        name: currentUser?.name || "You",
+        role: "Candidate",
+        avatar: currentUser?.avatar,
+        isLocal: true,
+        camOn: isCameraEnabled,
+        micOn: isMicEnabled,
+      },
+    ];
   }
 
-  const allParticipants = [...interviewers, ...candidates];
+  const allParticipants: InterviewParticipantCard[] = [...interviewers, ...candidates];
 
   // Helper derived states for layout
   const effectiveViewMode = isScreenShareActive ? "presentation" : isCodingRound ? "coding" : (pinnedId || viewMode === "speaker") ? "speaker" : "grid";
   
   const mainParticipant = pinnedId 
       ? allParticipants.find(p => p.id === pinnedId) 
-      : allParticipants.find(p => 'speaking' in p && p.speaking) || allParticipants[0];
+      : allParticipants.find((p) => p.speaking) || allParticipants[0];
+
+  const currentWorkflowTourStep =
+    workflowTourSteps[workflowTourStep] || workflowTourSteps[0];
+
+  const closeWorkflowTour = useCallback(() => {
+    try {
+      window.localStorage.setItem(workflowTourStorageKey, "completed");
+    } catch {
+      // Ignore storage access failures.
+    }
+    setIsWorkflowTourOpen(false);
+  }, [workflowTourStorageKey]);
+
+  useEffect(() => {
+    if (!isWorkflowTourOpen || !currentWorkflowTourStep) {
+      setWorkflowTourRect(null);
+      return;
+    }
+
+    const updateHighlight = () => {
+      const targetElement = document.querySelector(
+        currentWorkflowTourStep.target,
+      ) as HTMLElement | null;
+
+      if (!targetElement) {
+        setWorkflowTourRect(null);
+        return;
+      }
+
+      const rect = targetElement.getBoundingClientRect();
+      setWorkflowTourRect(rect);
+    };
+
+    const timer = window.setTimeout(() => {
+      updateHighlight();
+    }, 120);
+
+    window.addEventListener("resize", updateHighlight);
+    window.addEventListener("scroll", updateHighlight, true);
+
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("resize", updateHighlight);
+      window.removeEventListener("scroll", updateHighlight, true);
+    };
+  }, [
+    currentWorkflowTourStep,
+    effectiveViewMode,
+    isChatOpen,
+    isNotesOpen,
+    isWorkflowTourOpen,
+  ]);
 
   const handlePin = (id: string) => {
       setPinnedId(prev => prev === id ? null : id);
   };
 
   // Helper component to render a single participant card
-  const renderParticipant = (p: any, isMainView = false) => {
-      const isAI = 'isAI' in p ? p.isAI : false;
-      const isLocal = 'isLocal' in p ? p.isLocal : false;
-      const micOn = isLocal ? isMicEnabled : (('micOn' in p) ? (p as any).micOn : true);
-      const speaking = isLocal ? (isMicEnabled && true) : ('speaking' in p ? (p as any).speaking : false);
-      const hasCam = isLocal ? isCameraEnabled : ('camOn' in p ? (p as any).camOn : false);
-      const isCamOff = isLocal ? !isCameraEnabled : (('camOn' in p) ? !(p as any).camOn : false);
+    const renderParticipant = (p: InterviewParticipantCard, isMainView = false) => {
+      const isAI = Boolean(p.isAI);
+      const isLocal = Boolean(p.isLocal);
+      const micOn = isLocal ? isMicEnabled : p.micOn ?? true;
+      const speaking = isLocal ? isMicEnabled : Boolean(p.speaking);
+      const hasCam = isLocal ? isCameraEnabled : Boolean(p.camOn);
+      const isCamOff = !hasCam;
       const isPinned = pinnedId === p.id;
 
       return (
-        <Card key={p.id} className={cn(
+        <Card
+          key={p.id}
+          data-tour={isAI ? "ai-agent-card" : undefined}
+          className={cn(
             "group relative flex flex-col items-center justify-center overflow-hidden transition-all duration-300 w-full h-full",
             isMainView ? "min-h-[300px]" : (effectiveViewMode === "coding" ? "h-[180px]" : "min-h-[200px]"),
             isAI 
@@ -1088,7 +1514,8 @@ function InterviewSession({
                 : "bg-secondary/40 shadow-sm",
             speaking && isAI ? "ring-2 ring-indigo-500 ring-offset-2 ring-offset-background shadow-[0_0_30px_-5px_rgba(99,102,241,0.4)] z-10 border-transparent" : 
             speaking && !isAI ? "ring-2 ring-emerald-500 ring-offset-2 ring-offset-background shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)] z-10 border-transparent" : "border-border"
-        )}>
+        )}
+        >
              {/* Pin Button */}
              <Button
                 variant="secondary"
@@ -1141,7 +1568,7 @@ function InterviewSession({
                         speaking && !isAI ? "border-emerald-500 scale-105" : "border-muted"
                     )}>
                         <AvatarImage src={p.avatar} />
-                        <AvatarFallback>{p.name[0]}</AvatarFallback>
+                        <AvatarFallback>{p.name?.[0] || "?"}</AvatarFallback>
                     </Avatar>
                 </div>
              )}
@@ -1171,7 +1598,7 @@ function InterviewSession({
                             <VideoOff className="w-3.5 h-3.5" />
                         </Badge>
                     )}
-                    {(!micOn || (p.id !== 'self' && 'micOn' in p && !(p as any).micOn)) && (
+                    {(!micOn || (!isLocal && p.micOn === false)) && (
                         <Badge variant="secondary" className="bg-black/60 dark:bg-black/80 text-white border-none py-0 px-1.5 h-6 text-[10px] shadow-sm">
                             <MicOff className="w-3 h-3 text-red-500 mr-1"/>Muted
                         </Badge>
@@ -1192,12 +1619,60 @@ function InterviewSession({
       );
   };
 
+  const workflowTourTooltipStyle = (() => {
+    if (typeof window === "undefined") {
+      return {
+        top: "50%",
+        left: "50%",
+        transform: "translate(-50%, -50%)",
+      } as const;
+    }
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const cardWidth = Math.min(360, viewportWidth - 32);
+    const cardHeight = 220;
+
+    if (!workflowTourRect) {
+      return {
+        top: `${Math.max(16, (viewportHeight - cardHeight) / 2)}px`,
+        left: `${Math.max(16, (viewportWidth - cardWidth) / 2)}px`,
+      } as const;
+    }
+
+    let top = workflowTourRect.bottom + 16;
+    if (top + cardHeight > viewportHeight - 16) {
+      top = workflowTourRect.top - cardHeight - 16;
+    }
+    top = Math.max(16, top);
+
+    const left = Math.max(
+      16,
+      Math.min(workflowTourRect.left, viewportWidth - cardWidth - 16),
+    );
+
+    return {
+      top: `${top}px`,
+      left: `${left}px`,
+    } as const;
+  })();
+
+  const workflowTourHighlightStyle = workflowTourRect
+    ? {
+        top: `${Math.max(8, workflowTourRect.top - 8)}px`,
+        left: `${Math.max(8, workflowTourRect.left - 8)}px`,
+        width: `${workflowTourRect.width + 16}px`,
+        height: `${workflowTourRect.height + 16}px`,
+        boxShadow: "0 0 0 9999px rgba(2, 6, 23, 0.7)",
+      }
+    : undefined;
+
   return (
     <div className={cn("flex flex-col gap-4 min-h-full w-full relative transition-all duration-300", isIdeFullscreen && "fixed inset-0 z-[100] bg-background h-screen w-screen p-4")} ref={fullScreenContainerRef}>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <h1 className="min-w-0 truncate text-2xl font-bold leading-none">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <h1 className="min-w-0 truncate text-xl font-bold leading-none sm:text-2xl">
               {sessionDbData?.title || template?.title || "Session"}
             </h1>
             <Badge variant="outline" className="shrink-0 bg-green-500/10 text-green-500 border-green-500/20">Live</Badge>
@@ -1206,7 +1681,7 @@ function InterviewSession({
             {/* Configurable Invite / Share Meeting Button */}
             <Dialog>
               <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="h-6 ml-2 gap-1 text-xs">
+                <Button data-tour="invite-users-trigger" variant="outline" size="sm" className="h-6 gap-1 text-xs sm:ml-2">
                     <Users className="h-3 w-3" />
                     Invite Users
                 </Button>
@@ -1256,7 +1731,7 @@ function InterviewSession({
               </DialogContent>
             </Dialog>
 
-            <div className="flex -space-x-2 ml-4">
+            <div className="ml-1 flex -space-x-2 sm:ml-4">
                 {allParticipants.slice(0, 3).map((p) => (
                     <Avatar key={p.id} className="h-6 w-6 border border-muted drop-shadow-sm">
                         <AvatarImage src={p.avatar} />
@@ -1269,8 +1744,8 @@ function InterviewSession({
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-            <div className="flex items-center rounded-lg border border-border bg-card p-0.5 shadow-sm mr-2 hidden sm:flex">
+        <div className="flex w-full items-center justify-end gap-2 md:w-auto">
+            <div className="hidden items-center rounded-lg border border-border bg-card p-0.5 shadow-sm mr-2 sm:flex">
                 <Button 
                     variant="ghost" 
                     size="icon" 
@@ -1300,25 +1775,39 @@ function InterviewSession({
                     {isIdeFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
                 </Button>
             </div>
-            <Button variant="outline" size="sm" className="h-8 relative" onClick={() => setIsChatOpen(!isChatOpen)}>
+            <Button
+              data-tour="session-notes-trigger"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2 sm:px-3"
+              onClick={() => setIsNotesOpen(true)}
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              <span className="hidden sm:inline">Notes</span>
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 relative px-2 sm:px-3" onClick={() => setIsChatOpen(!isChatOpen)}>
               <MessageSquare className="mr-2 h-4 w-4" /> 
-              Chat
+              <span className="hidden sm:inline">Chat</span>
               <Badge className="absolute -top-2 -right-2 h-4 w-4 p-0 flex items-center justify-center bg-indigo-500">1</Badge>
             </Button>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex flex-1 min-h-0 p-1 -m-1 relative">
+      <div className="relative -m-1 flex flex-1 min-h-0 p-1 pb-24 sm:pb-20">
          {(effectiveViewMode === 'grid' || (effectiveViewMode === 'coding' && isIdeCollapsed)) && (
              <div className={cn(
-                 "grid gap-3 flex-1 h-full w-full pb-20 items-center content-center max-h-full",
-                 allParticipants.length <= 2 ? "grid-cols-1 sm:grid-cols-2" :
-                 allParticipants.length <= 4 ? "grid-cols-2" :
-                 "grid-cols-2 lg:grid-cols-3"
+             "grid gap-3 flex-1 h-full w-full min-h-0 auto-rows-fr items-stretch content-stretch",
+             allParticipants.length <= 1
+               ? "grid-cols-1"
+               : allParticipants.length === 2
+               ? "grid-cols-1 lg:grid-cols-2"
+               : allParticipants.length <= 4
+                 ? "grid-cols-1 sm:grid-cols-2"
+                 : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
              )}>
                  {allParticipants.map(p => (
-                     <div key={p.id} className="w-full h-full max-h-[45vh] lg:max-h-[600px] flex justify-center">
+               <div key={p.id} className="w-full h-full min-h-0">
                          {renderParticipant(p, false)}
                      </div>
                  ))}
@@ -1367,7 +1856,7 @@ function InterviewSession({
                                 </div>
                              </div>
 
-                             <div className="flex-1 min-h-[300px] p-0 relative isolate">
+                             <div data-tour="code-editor-pane" className="flex-1 min-h-[300px] p-0 relative isolate">
                                 <CodeEditor 
                                     value={code} 
                                     language={codeLanguage}
@@ -1503,17 +1992,42 @@ function InterviewSession({
           </div>
       )}
 
+      <Dialog open={isNotesOpen} onOpenChange={setIsNotesOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Session Notes</DialogTitle>
+            <DialogDescription>
+              Capture talking points, follow-up questions, and improvement cues in real time.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={sessionNotes}
+            onChange={(event) => setSessionNotes(event.target.value)}
+            className="min-h-64"
+            placeholder="Write your notes here..."
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSessionNotes("")}>Clear</Button>
+            <Button onClick={() => setIsNotesOpen(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Controls Bar */}
-      <div className="sticky bottom-4 z-50 mt-auto mx-auto w-full max-w-fit pointer-events-none px-4">
-        <Card className="p-3 border-border bg-card/85 backdrop-blur-3xl shadow-2xl dark:shadow-black/50 pointer-events-auto rounded-full ring-1 ring-border/50">
-          <div className="flex items-center justify-between gap-6 px-4">
-            <div className="flex bg-background/50 rounded-full p-1 gap-1 border border-border shadow-inner">
+      <div className="sticky bottom-2 z-50 mt-auto mx-auto w-full max-w-fit pointer-events-none px-2 pb-[max(env(safe-area-inset-bottom),0px)] sm:bottom-4 sm:px-4">
+        <Card className="p-2 border-border bg-card/85 backdrop-blur-3xl shadow-2xl dark:shadow-black/50 pointer-events-auto rounded-full ring-1 ring-border/50 sm:p-3">
+          <div className="flex flex-col items-center gap-2 px-1 sm:flex-row sm:justify-between sm:gap-6 sm:px-4">
+            <div data-tour="media-controls" className="flex bg-background/50 rounded-full p-1 gap-1 border border-border shadow-inner">
                {/* Mic Selector box */}
-               <div className="h-12 flex items-stretch rounded-full hover:bg-background/80 transition-colors overflow-hidden shrink-0">
+               <div className="h-10 flex items-stretch rounded-full hover:bg-background/80 transition-colors overflow-hidden shrink-0 sm:h-12">
                  <Button 
+                   type="button"
                    variant={!isMicEnabled ? "destructive" : "ghost"} 
-                   className={cn("h-full px-4 rounded-none transition-colors", isMicEnabled && "bg-transparent hover:bg-secondary")}
-                   onClick={toggleMic}
+                   className={cn("h-full px-3 rounded-none transition-colors sm:px-4", isMicEnabled && "bg-transparent hover:bg-secondary")}
+                   onClick={(event) => {
+                     event.preventDefault();
+                     toggleMic();
+                   }}
                  >
                    {!isMicEnabled ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5 text-emerald-500 dark:text-emerald-400" />}
                  </Button>
@@ -1530,11 +2044,15 @@ function InterviewSession({
                </div>
 
                {/* Cam Selector box */}
-               <div className="h-12 flex items-stretch rounded-full hover:bg-background/80 transition-colors overflow-hidden shrink-0">
+               <div className="h-10 flex items-stretch rounded-full hover:bg-background/80 transition-colors overflow-hidden shrink-0 sm:h-12">
                  <Button 
+                   type="button"
                    variant={!isCameraEnabled ? "destructive" : "ghost"} 
-                   className={cn("h-full px-4 rounded-none transition-colors", isCameraEnabled && "bg-transparent hover:bg-secondary")}
-                   onClick={toggleCam}
+                   className={cn("h-full px-3 rounded-none transition-colors sm:px-4", isCameraEnabled && "bg-transparent hover:bg-secondary")}
+                   onClick={(event) => {
+                     event.preventDefault();
+                     toggleCam();
+                   }}
                  >
                    {!isCameraEnabled ? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5 text-blue-500 dark:text-blue-400" />}
                  </Button>
@@ -1556,21 +2074,21 @@ function InterviewSession({
                <Button
                   variant={isScreenShareActive ? "default" : "secondary"}
                   size="icon"
-                  className={cn("h-14 w-14 rounded-full shadow-lg transition-all shrink-0", isScreenShareActive && "bg-indigo-600 hover:bg-indigo-700")}
+                  className={cn("h-11 w-11 rounded-full shadow-lg transition-all shrink-0 sm:h-14 sm:w-14", isScreenShareActive && "bg-indigo-600 hover:bg-indigo-700")}
                   onClick={handleToggleScreenShare}
                >
-                  <MonitorUp className="h-6 w-6" />
+                  <MonitorUp className="h-5 w-5 sm:h-6 sm:w-6" />
                </Button>
             
                {/* Center exit button — opens post-session report */}
               <Button 
                 variant="destructive" 
                 size="icon" 
-                className="h-14 w-14 rounded-full shadow-xl hover:bg-red-600 hover:scale-105 transition-all outline-4 outline-red-900/20 shrink-0 mx-2"
+                className="h-11 w-11 rounded-full shadow-xl hover:bg-red-600 hover:scale-105 transition-all outline-4 outline-red-900/20 shrink-0 mx-1 sm:h-14 sm:w-14 sm:mx-2"
                 title="End Interview"
                 onClick={handleEndInterviewClick}
               >
-                <PhoneOff className="h-6 w-6" />
+                <PhoneOff className="h-5 w-5 sm:h-6 sm:w-6" />
               </Button>
 
               <div className="flex items-center gap-2">
@@ -1582,6 +2100,79 @@ function InterviewSession({
           </div>
         </Card>
       </div>
+
+      {isWorkflowTourOpen && currentWorkflowTourStep && (
+        <div className="fixed inset-0 z-240">
+          {workflowTourHighlightStyle ? (
+            <div
+              className="pointer-events-none absolute rounded-xl border-2 border-indigo-400"
+              style={workflowTourHighlightStyle}
+            />
+          ) : (
+            <div className="absolute inset-0 bg-slate-950/70" />
+          )}
+
+          <div
+            className="absolute w-[min(360px,calc(100vw-2rem))] rounded-xl border border-border bg-card p-4 shadow-2xl"
+            style={workflowTourTooltipStyle}
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">
+              Guided Workflow
+            </p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">
+              {currentWorkflowTourStep.title}
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground leading-6">
+              {currentWorkflowTourStep.description}
+            </p>
+
+            <div className="mt-3 flex items-center gap-2">
+              {workflowTourSteps.map((step, index) => (
+                <span
+                  key={step.key}
+                  className={cn(
+                    "h-1.5 flex-1 rounded-full",
+                    index <= workflowTourStep ? "bg-indigo-500" : "bg-muted",
+                  )}
+                />
+              ))}
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <Button variant="ghost" size="sm" onClick={closeWorkflowTour}>
+                Skip
+              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={workflowTourStep === 0}
+                  onClick={() =>
+                    setWorkflowTourStep((step) => Math.max(0, step - 1))
+                  }
+                >
+                  Back
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    if (workflowTourStep >= workflowTourSteps.length - 1) {
+                      closeWorkflowTour();
+                      return;
+                    }
+                    setWorkflowTourStep((step) =>
+                      Math.min(workflowTourSteps.length - 1, step + 1),
+                    );
+                  }}
+                >
+                  {workflowTourStep >= workflowTourSteps.length - 1 ? "Finish" : "Next"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* End-of-session Report Modal */}
       {showReportModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-md animate-in fade-in duration-300">

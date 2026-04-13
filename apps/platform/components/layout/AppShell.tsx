@@ -4,7 +4,16 @@ import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
-import { getBackendUrl } from "@/lib/backend";
+import { backendGet } from "@/lib/backend";
+
+function isAuthFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const status = (error as { status?: number }).status;
+  return status === 401 || status === 403;
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -35,25 +44,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     const validateSession = async () => {
       try {
-        const response = await fetch(`${getBackendUrl()}/api/user`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          cache: "no-store",
-        });
-
-        if (!response.ok) {
-          throw new Error(`Session validation failed with status ${response.status}`);
-        }
+        await backendGet("/api/user");
 
         if (!cancelled) {
           setAuthChecked(true);
         }
-      } catch {
-        localStorage.removeItem("auth_token");
+      } catch (error) {
+        if (isAuthFailure(error)) {
+          localStorage.removeItem("auth_token");
+          localStorage.removeItem("token");
+          if (!cancelled) {
+            router.replace(`/auth?returnTo=${encodeURIComponent(returnTo)}`);
+          }
+          return;
+        }
+
+        // Keep the user in-app on transient network/backend issues.
         if (!cancelled) {
-          router.replace(`/auth?returnTo=${encodeURIComponent(returnTo)}`);
+          setAuthChecked(true);
         }
       }
     };

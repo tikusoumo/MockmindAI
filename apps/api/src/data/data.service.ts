@@ -56,23 +56,23 @@ const defaultInterviewTemplates = [
 const defaultProgressStats = [
   {
     label: 'Sessions Completed',
-    value: 12,
-    change: 3,
-    history: [8, 10, 9, 11, 12],
+    value: 0,
+    change: 0,
+    history: [],
   },
   {
     label: 'Average Score',
-    value: 85,
-    change: 5,
-    history: [78, 80, 82, 83, 85],
+    value: 0,
+    change: 0,
+    history: [],
   },
   {
     label: 'Hours Practiced',
-    value: 24,
-    change: 8,
-    history: [12, 15, 18, 20, 24],
+    value: 0,
+    change: 0,
+    history: [],
   },
-  { label: 'Streak Days', value: 7, change: 2, history: [3, 4, 5, 5, 7] },
+  { label: 'Streak Days', value: 0, change: 0, history: [] },
 ];
 
 const defaultReportLatest = {
@@ -330,18 +330,266 @@ export class DataService {
     }
   }
 
-  async getProgressStats() {
+  async getProgressStats(userId: number) {
+    const normalizedUserId = Number(userId);
+    if (!Number.isFinite(normalizedUserId)) {
+      return defaultProgressStats;
+    }
+
     try {
-      const stats = await this.prisma.progressStat.findMany();
-      return stats.length > 0 ? stats : defaultProgressStats;
+      // Always derive from reports to avoid showing seeded/static legacy rows
+      // when a user has not completed interviews yet.
+      return this.buildProgressStatsFromReports(normalizedUserId);
     } catch {
       return defaultProgressStats;
     }
   }
 
-  async getLatestReport() {
+  private async buildProgressStatsFromReports(userId: number) {
+    const reports = await this.prisma.report.findMany({
+      where: {
+        session: {
+          userId,
+        },
+      },
+      orderBy: { date: 'asc' },
+      select: {
+        date: true,
+        overallScore: true,
+        session: {
+          select: {
+            duration: true,
+          },
+        },
+      },
+    });
+
+    if (reports.length === 0) {
+      return defaultProgressStats;
+    }
+
+    const now = new Date();
+    const currentWindowStart = new Date(now);
+    currentWindowStart.setUTCDate(currentWindowStart.getUTCDate() - 30);
+    const previousWindowStart = new Date(currentWindowStart);
+    previousWindowStart.setUTCDate(previousWindowStart.getUTCDate() - 30);
+
+    const currentWindowReports = reports.filter(
+      (report) => report.date >= currentWindowStart,
+    );
+    const previousWindowReports = reports.filter(
+      (report) =>
+        report.date >= previousWindowStart && report.date < currentWindowStart,
+    );
+
+    const totalSessions = reports.length;
+    const totalScore = reports.reduce(
+      (sum, report) => sum + (report.overallScore || 0),
+      0,
+    );
+    const averageScore = Math.round(totalScore / totalSessions);
+
+    const totalDurationSeconds = reports.reduce(
+      (sum, report) => sum + (report.session?.duration || 0),
+      0,
+    );
+    const totalHours = Number((totalDurationSeconds / 3600).toFixed(1));
+
+    const currentAvgScore =
+      currentWindowReports.length > 0
+        ? Math.round(
+            currentWindowReports.reduce(
+              (sum, report) => sum + (report.overallScore || 0),
+              0,
+            ) / currentWindowReports.length,
+          )
+        : 0;
+    const previousAvgScore =
+      previousWindowReports.length > 0
+        ? Math.round(
+            previousWindowReports.reduce(
+              (sum, report) => sum + (report.overallScore || 0),
+              0,
+            ) / previousWindowReports.length,
+          )
+        : 0;
+
+    const currentHours = Number(
+      (
+        currentWindowReports.reduce(
+          (sum, report) => sum + (report.session?.duration || 0),
+          0,
+        ) / 3600
+      ).toFixed(1),
+    );
+    const previousHours = Number(
+      (
+        previousWindowReports.reduce(
+          (sum, report) => sum + (report.session?.duration || 0),
+          0,
+        ) / 3600
+      ).toFixed(1),
+    );
+
+    const streakDays = this.calculateStreakDays(
+      reports.map((report) => report.date),
+    );
+    const previousStreakDays = this.calculateStreakDays(
+      previousWindowReports.map((report) => report.date),
+    );
+
+    const monthBuckets = this.getRecentMonthKeys(6, now);
+    const monthBucketSet = new Set(monthBuckets);
+    const reportsByMonth = new Map<
+      string,
+      Array<{
+        date: Date;
+        overallScore: number;
+        session: { duration: number | null } | null;
+      }>
+    >();
+
+    for (const report of reports) {
+      const monthKey = this.toMonthKey(report.date);
+      if (!monthBucketSet.has(monthKey)) {
+        continue;
+      }
+      const existing = reportsByMonth.get(monthKey) || [];
+      existing.push(report);
+      reportsByMonth.set(monthKey, existing);
+    }
+
+    const sessionsHistory = monthBuckets.map(
+      (month) => reportsByMonth.get(month)?.length || 0,
+    );
+    const averageScoreHistory = monthBuckets.map((month) => {
+      const monthReports = reportsByMonth.get(month) || [];
+      if (monthReports.length === 0) {
+        return 0;
+      }
+      const scoreSum = monthReports.reduce(
+        (sum, report) => sum + (report.overallScore || 0),
+        0,
+      );
+      return Math.round(scoreSum / monthReports.length);
+    });
+    const hoursHistory = monthBuckets.map((month) => {
+      const monthReports = reportsByMonth.get(month) || [];
+      if (monthReports.length === 0) {
+        return 0;
+      }
+      const durationSumSeconds = monthReports.reduce(
+        (sum, report) => sum + (report.session?.duration || 0),
+        0,
+      );
+      return Number((durationSumSeconds / 3600).toFixed(1));
+    });
+    const streakHistory = monthBuckets.map((month) => {
+      const monthReports = reportsByMonth.get(month) || [];
+      if (monthReports.length === 0) {
+        return 0;
+      }
+      return this.calculateStreakDays(monthReports.map((report) => report.date));
+    });
+
+    return [
+      {
+        label: 'Sessions Completed',
+        value: totalSessions,
+        change: currentWindowReports.length - previousWindowReports.length,
+        history: sessionsHistory,
+      },
+      {
+        label: 'Average Score',
+        value: averageScore,
+        change: currentAvgScore - previousAvgScore,
+        history: averageScoreHistory,
+      },
+      {
+        label: 'Hours Practiced',
+        value: totalHours,
+        change: Number((currentHours - previousHours).toFixed(1)),
+        history: hoursHistory,
+      },
+      {
+        label: 'Streak Days',
+        value: streakDays,
+        change: streakDays - previousStreakDays,
+        history: streakHistory,
+      },
+    ];
+  }
+
+  private calculateStreakDays(dates: Date[]) {
+    if (dates.length === 0) {
+      return 0;
+    }
+
+    const dayKeys = Array.from(
+      new Set(dates.map((date) => this.toDayKey(date))),
+    ).sort((a, b) => b.localeCompare(a));
+
+    let streak = 0;
+    let cursor = this.dayKeyToDate(dayKeys[0]);
+
+    for (const dayKey of dayKeys) {
+      const dayDate = this.dayKeyToDate(dayKey);
+      if (dayDate.getTime() === cursor.getTime()) {
+        streak += 1;
+        cursor = new Date(cursor);
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+        continue;
+      }
+
+      break;
+    }
+
+    return streak;
+  }
+
+  private getRecentMonthKeys(count: number, referenceDate: Date) {
+    return Array.from({ length: count }, (_, index) => {
+      const monthDate = new Date(
+        Date.UTC(
+          referenceDate.getUTCFullYear(),
+          referenceDate.getUTCMonth() - (count - 1 - index),
+          1,
+        ),
+      );
+      return this.toMonthKey(monthDate);
+    });
+  }
+
+  private toMonthKey(date: Date) {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(
+      2,
+      '0',
+    )}`;
+  }
+
+  private toDayKey(date: Date) {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(
+      2,
+      '0',
+    )}-${String(date.getUTCDate()).padStart(2, '0')}`;
+  }
+
+  private dayKeyToDate(dayKey: string) {
+    return new Date(`${dayKey}T00:00:00.000Z`);
+  }
+
+  async getLatestReport(userId?: number, _userEmail?: string) {
     try {
+      if (!userId) {
+        return null;
+      }
+
       const report = await this.prisma.report.findFirst({
+        where: {
+          session: {
+            userId: Number(userId),
+          },
+        },
         include: {
           questions: true,
           transcripts: true,
@@ -356,32 +604,24 @@ export class DataService {
           transcript: transcripts,
         };
       }
-      return defaultReportLatest;
+      return null;
     } catch {
-      return defaultReportLatest;
+      return null;
     }
   }
 
-  async getPastInterviews(userId?: number, userEmail?: string) {
+  async getPastInterviews(userId?: number, _userEmail?: string) {
     try {
-      const filters: any[] = [];
-      if (userId) {
-        filters.push({ session: { userId: Number(userId) } });
+      if (!userId) {
+        return [];
       }
-      if (userEmail) {
-        filters.push({
-          session: {
-            participants: {
-              some: {
-                email: userEmail,
-              },
-            },
-          },
-        });
-      }
-      const condition = filters.length > 0 ? { OR: filters } : {};
+
       const reports = await this.prisma.report.findMany({
-        where: condition,
+        where: {
+          session: {
+            userId: Number(userId),
+          },
+        },
         orderBy: { date: 'desc' },
         include: {
           session: {

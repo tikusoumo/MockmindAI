@@ -92,19 +92,22 @@ export function useBackendData<T>(path: string, fallback: T): T {
 
   React.useEffect(() => {
     let cancelled = false;
+    setData(fallback);
 
     fetchJson<T>(path)
       .then((next) => {
         if (!cancelled) setData(next);
       })
       .catch(() => {
-        // keep fallback
+        if (!cancelled) {
+          setData(fallback);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [fallback, path]);
 
   return data;
 }
@@ -115,6 +118,7 @@ export function useBackendDataState<T>(path: string, fallback: T): { data: T; is
 
   React.useEffect(() => {
     let cancelled = false;
+    setData(fallback);
     setIsLoading(true);
 
     fetchJson<T>(path)
@@ -125,13 +129,16 @@ export function useBackendDataState<T>(path: string, fallback: T): { data: T; is
         }
       })
       .catch(() => {
-        if (!cancelled) setIsLoading(false);
+        if (!cancelled) {
+          setData(fallback);
+          setIsLoading(false);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [fallback, path]);
 
   return { data, isLoading };
 }
@@ -147,6 +154,19 @@ export async function backendPut<T>(path: string, body: unknown): Promise<T> {
   return fetchJson<T>(path, {
     method: "PUT",
     body: JSON.stringify(body),
+  });
+}
+
+export async function backendPatch<T>(path: string, body: unknown): Promise<T> {
+  return fetchJson<T>(path, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function backendDelete<T>(path: string): Promise<T> {
+  return fetchJson<T>(path, {
+    method: "DELETE",
   });
 }
 

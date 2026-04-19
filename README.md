@@ -1,6 +1,7 @@
 
 
-Uploading Mockmindai.mp4…
+
+
 
 <div align="center">
 
@@ -15,6 +16,7 @@ MockMindAI is an intelligent mock interview platform that simulates real intervi
 ---
 
 </div>
+https://github.com/user-attachments/assets/f4786874-cf99-4398-875e-4dacb7dcac85
 
 ## Table of Contents
 
